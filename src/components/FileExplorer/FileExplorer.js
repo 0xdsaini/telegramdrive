@@ -348,8 +348,19 @@ const FileExplorer = () => {
       }
       
       // Don't allow dropping a folder into itself or its child
-      if (sourcePath === destPath || destPath.startsWith(sourcePath + '/')) {
-        setError('Cannot move a folder into itself or its subfolder');
+      // Normalize paths for proper comparison
+      const normalizedSourcePathForComparison = normalizedSourcePath.endsWith('/') ? normalizedSourcePath : `${normalizedSourcePath}/`;
+      const normalizedDestPathForComparison = normalizedDestPath.endsWith('/') ? normalizedDestPath : `${normalizedDestPath}/`;
+      
+      // Check if source and destination are the same folder
+      if (normalizedSourcePath === normalizedDestPath) {
+        setError('Cannot move a folder into itself');
+        return;
+      }
+      
+      // Check if destination is a subfolder of source
+      if (normalizedDestPathForComparison.startsWith(normalizedSourcePathForComparison)) {
+        setError('Cannot move a folder into its subfolder');
         return;
       }
       
