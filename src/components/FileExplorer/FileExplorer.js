@@ -401,8 +401,10 @@ const FileExplorer = () => {
       const sourceFilePath = dragData.replace('file:', '');
       const fileName = sourceFilePath.split('/').pop();
       
-      // Set destination path as the current path where we're dropping
-      const destPath = currentPath;
+      // Set destination path as the folder we're dropping into
+      const destPath = folderName ? 
+        (currentPath === '/' ? `/${folderName}` : `${currentPath}/${folderName}`) : 
+        currentPath;
       
       // Get the parent path of the source file
       const sourcePathSegments = sourceFilePath.split('/').filter(Boolean);
@@ -414,10 +416,19 @@ const FileExplorer = () => {
       const normalizedDestPath = destPath.startsWith('/') ? destPath : `/${destPath}`;
       
       // Check if we're dropping to the same folder (current location)
-      if (normalizedSourceParentPath === normalizedDestPath) {
+      // We need to compare both the normalized paths AND the original paths
+      // This ensures we can move between sibling directories with similar names
+      // For sibling folders, we need to check the full path including the filename
+      const sourceFullPath = sourceFilePath;
+      const destFullPath = destPath === '/' ? `/${fileName}` : `${destPath}/${fileName}`;
+      
+      if (sourceFullPath === destFullPath) {
         setSuccess('File is already in this location');
         return;
       }
+      
+      // If the file is in a sibling folder, allow the move to proceed
+      // No additional check needed here as we want to allow moves between sibling folders
       
       console.log('Source File Path:', sourceFilePath);
       console.log('Destination Path:', destPath);
@@ -687,6 +698,18 @@ const FileExplorer = () => {
                 const sourcePathSegments = sourceFilePath.split('/').filter(Boolean);
                 const sourceParentPathSegments = sourcePathSegments.slice(0, -1);
                 const sourceParentPath = sourceParentPathSegments.length === 0 ? '/' : '/' + sourceParentPathSegments.join('/');
+                
+                // Normalize paths for comparison
+                const normalizedSourceParentPath = sourceParentPath.startsWith('/') ? sourceParentPath : `/${sourceParentPath}`;
+                const normalizedParentPath = parentPath.startsWith('/') ? parentPath : `/${parentPath}`;
+                
+                // Check if we're dropping to the same folder
+                // Compare both normalized and original paths to ensure accurate comparison
+                if (normalizedSourceParentPath === normalizedParentPath && sourceParentPath === parentPath) {
+                  setSuccess('File is already in this location');
+                  return;
+                }
+                // We don't need additional checks here - if paths are different, allow the move
                 
                 try {
                   setError(null);
