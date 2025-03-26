@@ -1,0 +1,15 @@
+{
+  "files": {
+    "main.css": "/telegramdrive/static/css/main.5e28a852.css",
+    "main.js": "/telegramdrive/static/js/main.d7c402e6.js",
+    "static/js/453.5e720e7e.chunk.js": "/telegramdrive/static/js/453.5e720e7e.chunk.js",
+    "index.html": "/telegramdrive/index.html",
+    "main.5e28a852.css.map": "/telegramdrive/static/css/main.5e28a852.css.map",
+    "main.d7c402e6.js.map": "/telegramdrive/static/js/main.d7c402e6.js.map",
+    "453.5e720e7e.chunk.js.map": "/telegramdrive/static/js/453.5e720e7e.chunk.js.map"
+  },
+  "entrypoints": [
+    "static/css/main.5e28a852.css",
+    "static/js/main.d7c402e6.js"
+  ]
+}
