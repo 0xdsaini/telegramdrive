@@ -1,3 +1,17 @@
+How to run(in localhost):
+
+`npm start`
+
+How to build(practically not use though):
+
+`npm run build`
+
+How to deploy(scripts exists to deploy on github-pages):
+
+`npm run deploy`
+
+------
+
 # Getting Started with Create React App
 
 This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
