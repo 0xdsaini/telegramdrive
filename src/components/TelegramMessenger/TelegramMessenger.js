@@ -1,5 +1,9 @@
+import { TELEGRAM_API_ID, TELEGRAM_API_HASH, CHAT_ID } from './constants';
+
 import React, { useState, useEffect, useRef } from 'react';
 import './TelegramMessenger.css';
+
+let messageId = '';
 
 const TelegramMessenger = () => {
   const [message, setMessage] = useState('');
@@ -14,8 +18,77 @@ const TelegramMessenger = () => {
   const clientRef = useRef(null);
   const getChatsPromiseRef = useRef(null);
 
+  // Global variable:
+  // Best practice, use React Context for pan-Component global variable.
+  // not good practice: window.var = <something> works but can be overridden in runtime
+  // use window.var method if this useState doesn't work.
+  const [messageId, setMessageId] = useState([]);
+
   const inputRef = useRef(null);
   
+  const findMessageId = async () => {
+
+    if (!clientRef.current || !getChatsPromiseRef.current) return;
+    // Wait for the getChats promise to resolve
+    const chatData = await getChatsPromiseRef.current;
+    console.log("Chat Data:", chatData); 
+    console.error("Finding messageId...");
+
+    console.error("Chat Id", CHAT_ID);
+    try {
+
+      // Its not detecting let's say METADATA_STORAGE<any text>
+      const result = await clientRef.current.send({
+        "@type": "searchChatMessages",
+        "chat_id": -4744438579,
+        "query": "METADATA_STORAGE",
+        "limit": 5,
+        "from_message_id": 0,
+        "offset": 0,
+        "only_missed": false
+      })
+
+      console.error("finding messageId...")
+      // console for searchChatMessages:
+      console.error("searchChatMessages result:", result);
+      console.error("searchChatMessages result messages[0] id:", result.messages[0].id);
+      setMessageId(result.messages[0].id);
+
+      console.error(messageId);
+
+      // also return the found id
+      return result.messages[0].id;
+
+      // // Try to get chatHistory and we'll find that message ourselves
+      // const result = await clientRef.current.send({
+      //   "@type": "getChatHistory",
+      //   "chat_id": CHAT_ID,
+      //   "from_message_id": 0,
+      //   "offset": 0,
+      //   "limit": 50, // NOTICE: limit is 100 ONLY
+      //   "only_local": false
+      // });
+      // // console.log("Chat History fetched:", result);
+      // // Check if the result contains messages
+      // if (!result.messages || result.messages.length === 0) {
+      //   console.log("No messages found");
+      //   return;
+      // }
+      // // search for message containing our prefix
+      // // const message = result.messages.find(msg => msg.content.text.text.includes("METADATA_STORAGE"));
+      // console.error("messages: ", result.messages);
+
+
+
+      // Set messageId to the ID of the first message in the result
+      // setMessageId(result.messages[0].id);
+
+    }
+    catch (error) {
+      console.error('Error fetching message ID:', error);
+    }
+  };
+
   // Initialize TDLib
   useEffect(() => {
 
@@ -35,8 +108,8 @@ const TelegramMessenger = () => {
           logVerbosityLevel: 1,
           jsLogVerbosityLevel: 'info',
           mode: 'wasm',
-          api_id: 2899,
-          api_hash: '36722c72256a24c1225de00eb6a1ca74',
+          api_id: TELEGRAM_API_ID,
+          api_hash: TELEGRAM_API_HASH,
         });
         
         clientRef.current = client;
@@ -52,8 +125,8 @@ const TelegramMessenger = () => {
           "use_chat_info_database": true,
           "use_message_database": true,
           "use_secret_chats": false,
-          "api_id": 2899,  // Replace with your API ID
-          "api_hash": "36722c72256a24c1225de00eb6a1ca74", // Replace with your API Hash
+          "api_id": TELEGRAM_API_ID,  // Replace with your API ID
+          "api_hash": TELEGRAM_API_HASH, // Replace with your API Hash
           "system_language_code": "en",
           "device_model": "Web",
           "system_version": "TDLib",
@@ -67,11 +140,23 @@ const TelegramMessenger = () => {
         
         // Set up event handling
         client.onUpdate = update => {
+
+          console.log("all update(disable this in onUpdate init function):", update);
           // Safely check if update exists and has a type
           if (!update || typeof update !== 'object') return;
           
           try {
             console.log('TDLib update:', update);
+
+            // When a new message is sent, to obtain its message id, we'll need to listen for updateMessageSendSucceeded event
+            if (update['@type'] === 'updateMessageSendSucceeded') {
+              console.error('Message sent successfully:', update.message);
+              if (update.message.content.text.text.includes("METADATA_STORAGE")) {
+                console.error("METADATA_STORAGE found in message:", update.message);
+                console.error("METADATA_STORAGE message id:", update.message.id);
+                setMessageId(update.message.id);
+              }
+            }
             
             if (update['@type'] === 'updateAuthorizationState' && update.authorization_state) {
               const currentAuthState = update.authorization_state['@type'];
@@ -91,6 +176,7 @@ const TelegramMessenger = () => {
                 setIsConnected(true);
                 setAuthState('ready');
                 initializeData();
+                findMessageId();
               } else if (currentAuthState === 'authorizationStateClosed') {
                 setStatus('Connection closed');
                 setIsConnected(false);
@@ -105,18 +191,59 @@ const TelegramMessenger = () => {
           }
         };
 
-        // We'll still call initializeData here to ensure it runs even if the event handler doesn't trigger
-        await initializeData();
-        
       } catch (error) {
         console.error('TDLib initialization error:', error);
         setStatus(`Error: ${error.message || 'Failed to initialize TDLib'}`);
       }
     };
+
+        // Initialize data after successful authentication
+    const initializeData = async () => {
+      if (!clientRef.current) return;
+      
+      try {
+        // Create a promise to fetch chats that can be awaited later
+        getChatsPromiseRef.current = new Promise(async (resolve, reject) => {
+          try {
+            // Try to get a specific chat first
+            try {
+              await clientRef.current.send({
+                "@type": "getChat",
+                "chat_id": CHAT_ID // You might need to replace this with a valid chat ID
+              });
+              setIsConnected(true); // Update connection status on success
+              resolve(true);
+            } catch (error) {
+              console.log("getChat failed, trying getChats instead");
+              
+              // If getting a specific chat fails, try to get all chats
+              // Add a delay to ensure authorization is complete
+              await new Promise(resolve => setTimeout(resolve, 3000));
+              
+              const chatData = await clientRef.current.send({
+                "@type": "getChats",
+                "limit": 2000
+              });
+              console.log("Chats fetched:", chatData);
+              setIsConnected(true); // Update connection status on success
+              resolve(chatData);
+            }
+          } catch (chatError) {
+            console.error("Error fetching chats:", chatError);
+            // Don't reject here, just log the error and resolve with null
+            // This prevents unhandled promise rejections
+            resolve(null);
+          }
+        });
+      } catch (error) {
+        console.error("Error initializing data:", error);
+        // Don't throw the error, just log it
+      }
+    };
     
     // Initialize Telegram with a small delay to ensure the script is loaded
     const timeoutId = setTimeout(initTelegram, 500);
-    
+
     // Cleanup function
     return () => {
       clearTimeout(timeoutId);
@@ -125,51 +252,8 @@ const TelegramMessenger = () => {
       }
     };
   }, []);
-  
-  // Initialize data after successful authentication
-  const initializeData = async () => {
-    if (!clientRef.current) return;
-    
-    try {
-      // Create a promise to fetch chats that can be awaited later
-      getChatsPromiseRef.current = new Promise(async (resolve, reject) => {
-        try {
-          // Try to get a specific chat first
-          try {
-            await clientRef.current.send({
-              "@type": "getChat",
-              "chat_id": -4744438579 // You might need to replace this with a valid chat ID
-            });
-            setIsConnected(true); // Update connection status on success
-            resolve(true);
-          } catch (error) {
-            console.log("getChat failed, trying getChats instead");
-            
-            // If getting a specific chat fails, try to get all chats
-            // Add a delay to ensure authorization is complete
-            await new Promise(resolve => setTimeout(resolve, 3000));
-            
-            const chatData = await clientRef.current.send({
-              "@type": "getChats",
-              "limit": 100
-            });
-            console.log("Chats fetched:", chatData);
-            setIsConnected(true); // Update connection status on success
-            resolve(chatData);
-          }
-        } catch (chatError) {
-          console.error("Error fetching chats:", chatError);
-          // Don't reject here, just log the error and resolve with null
-          // This prevents unhandled promise rejections
-          resolve(null);
-        }
-      });
-    } catch (error) {
-      console.error("Error initializing data:", error);
-      // Don't throw the error, just log it
-    }
-  };
-  
+
+
   const handleMessageChange = (e) => {
     setMessage(e.target.value);
   };
@@ -244,47 +328,113 @@ const TelegramMessenger = () => {
       if (!clientRef.current) {
         throw new Error('Telegram client not initialized. Please try again.');
       }
-      
-      // Use a fixed chat ID for now
-      const chatId = -4744438579;
-      
-      // Try to send the message directly to the specified chat
-      try {
-        const result = await clientRef.current.send({
-          '@type': 'sendMessage',
-          'chat_id': chatId,
-          'input_message_content': {
-            '@type': 'inputMessageText',
-            'text': {
-              '@type': 'formattedText',
-              'text': message
-            }
-          }
-        });
-        
-        console.log('Message sent:', result);
-        setStatus('Message sent successfully');
-        
-        // Reset status after 3 seconds
-        setTimeout(() => {
-          if (isConnected) {
-            setStatus('Connected to Telegram');
-          }
-        }, 3000);
 
-        inputRef.current.focus();
-      } catch (sendError) {
-        console.error('Error sending to specific chat:', sendError);
-        setStatus('Message sent successfully');
-      }
+      await sendMessage(message, CHAT_ID);
+      setMessage("edited the same message");
+      console.error("sent message's id", messageId);
+      console.error("new message to send:", message);
+
+      setTimeout(() => {
+        console.error("editing message after 3 seconds", messageId, CHAT_ID);
+        editMessage("new message", messageId, CHAT_ID);
+      }, 3000);
+
+      setIsSending(false);
+      // if (messageId && messageId !== '') {
+      //   await editMessage(message, message_id, CHAT_ID);
+      // } else {
+      //   await sendMessage(message, CHAT_ID);
+      // }
       
     } catch (error) {
-      console.error('Failed to send message:', error);
-      setStatus(`Error: ${error.message || 'Failed to send message'}`);
+      console.error('Failed to edit message:', error);
+      setStatus(`Error: ${error.message || 'Failed to edit message'}`);
     } finally {
       setIsSending(false);
     }
   };
+
+  // Edit message in telegram - function
+  const editMessage = async (newMessage, message_id, chat_id) => {
+
+    console.error("Editing message", newMessage, message_id);
+
+    // Edit the message in the chat
+    try {
+      const result = await clientRef.current.send({
+        '@type': 'editMessageText',
+        'chat_id': chat_id,
+        'message_id': message_id,
+        'input_message_content': {
+          '@type': 'inputMessageText',
+          'text': {
+            '@type': 'formattedText',
+            'text': newMessage
+          }
+        }
+      });
+
+      console.error('Message edited:', result);
+      setStatus('Message edited successfully');
+      // setMessage('');
+      setIsSending(false);
+      return;
+    } catch (editError) {
+      console.error('Error editing message:', editError);
+      setStatus('Error editing message');
+      setIsSending(false);
+      return;
+    }
+
+  }
+
+  const sendMessage = async (newMessage, chat_id) => {
+
+    console.error("Sending message", newMessage);
+    console.error("messageId:", chat_id);
+
+    // Try to send the message directly to the specified chat
+    try {
+      const result = await clientRef.current.send({
+        '@type': 'sendMessage',
+        'chat_id': chat_id,
+        'input_message_content': {
+          '@type': 'inputMessageText',
+          'text': {
+            '@type': 'formattedText',
+            'text': newMessage
+          }
+        }
+      });
+      
+      console.error('Message sent:', result);
+      setStatus('Message sent successfully');
+
+      // Reset status after 3 seconds
+      setTimeout(() => {
+        if (isConnected) {
+          setStatus('Connected to Telegram');
+        }
+      }, 3000);
+
+      // for some reason result.id is wrong id telegram is returning. we'll need to search for our message again.
+      // return message id back to caller.
+      // return result.id;
+
+      return
+
+      // await findMessageId();
+      // let newMesssageId = await findMessageId();
+
+      // return newMesssageId
+
+    } catch (sendError) {
+      console.error('Error sending to specific chat:', sendError);
+      setStatus('Message sent successfully');
+    }
+
+    return;
+  }
   
   // Render all forms with appropriate disabled states
   const renderAuthForms = () => {
