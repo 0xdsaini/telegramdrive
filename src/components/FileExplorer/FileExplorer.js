@@ -109,6 +109,30 @@ const FileExplorer = () => {
     }
   };
 
+  // Helper function to recursively collect all files in a folder and its subfolders
+  const collectFilesInFolder = (folder, path = '') => {
+    let files = [];
+    
+    // Add files in current folder
+    if (folder.files && Array.isArray(folder.files)) {
+      files = folder.files.map(file => ({
+        ...file,
+        path: path
+      }));
+    }
+    
+    // Recursively add files from subfolders
+    if (folder.subfolders && Array.isArray(folder.subfolders)) {
+      for (const subfolder of folder.subfolders) {
+        const subfolderPath = path === '/' ? `/${subfolder.name}` : `${path}/${subfolder.name}`;
+        const subfolderFiles = collectFilesInFolder(subfolder, subfolderPath);
+        files = [...files, ...subfolderFiles];
+      }
+    }
+    
+    return files;
+  };
+
   const handleDeleteFolder = async (folderName, e) => {
     e.stopPropagation(); // Prevent folder navigation when clicking delete
     
@@ -127,6 +151,35 @@ const FileExplorer = () => {
       
       const folderPath = currentPath === '/' ? `/${folderName}` : `${currentPath}/${folderName}`;
       
+      // Find the folder to delete
+      const folderToDelete = findFolderByPath(fileStructure, folderPath);
+      if (!folderToDelete) {
+        setError(`Folder not found: ${folderPath}`);
+        return;
+      }
+      
+      // Collect all files in the folder and its subfolders
+      const filesToDelete = collectFilesInFolder(folderToDelete, folderPath);
+      console.log(`Found ${filesToDelete.length} files to delete in folder ${folderPath}`);
+      
+      // Delete all files from Telegram
+      for (const file of filesToDelete) {
+        if (file.message_id) {
+          try {
+            await telegramClient.send({
+              '@type': 'deleteMessages',
+              'chat_id': CHAT_ID,
+              'message_ids': [file.message_id],
+              'revoke': true
+            });
+            console.log(`Deleted message with ID: ${file.message_id} for file: ${file.filename}`);
+          } catch (deleteError) {
+            console.error(`Error deleting message for file ${file.filename}: ${deleteError.message}`);
+            // Continue with other files even if one deletion fails
+          }
+        }
+      }
+      
       // Delete folder from the file structure
       const updatedStructure = deleteFolder(fileStructure, folderPath);
       
@@ -134,7 +187,7 @@ const FileExplorer = () => {
       const success = await window.updateTelegramFileStructure(updatedStructure);
       
       if (success) {
-        setSuccess(`Folder "${folderName}" deleted successfully`);
+        setSuccess(`Folder "${folderName}" and all its contents deleted successfully`);
       } else {
         setError('Failed to delete folder');
       }
@@ -537,6 +590,39 @@ const FileExplorer = () => {
       setError(null);
       setSuccess(null);
       
+      // Find the file in the current folder to get its message_id
+      const folder = findFolderByPath(fileStructure, currentPath);
+      if (!folder) {
+        setError(`Folder not found: ${currentPath}`);
+        return;
+      }
+      
+      const fileToDelete = folder.files.find(f => f.filename === fileName);
+      if (!fileToDelete) {
+        setError(`File not found: ${fileName}`);
+        return;
+      }
+      
+      const messageId = fileToDelete.message_id;
+      if (!messageId) {
+        setError(`No message ID found for file: ${fileName}`);
+        return;
+      }
+      
+      // Delete the actual file message from Telegram
+      try {
+        await telegramClient.send({
+          '@type': 'deleteMessages',
+          'chat_id': CHAT_ID,
+          'message_ids': [messageId],
+          'revoke': true
+        });
+        console.log(`Deleted message with ID: ${messageId}`);
+      } catch (deleteError) {
+        console.error(`Error deleting message: ${deleteError.message}`);
+        // Continue with metadata deletion even if message deletion fails
+      }
+      
       // Delete file from the file structure
       const updatedStructure = deleteFile(fileStructure, currentPath, fileName);
       
@@ -551,6 +637,115 @@ const FileExplorer = () => {
     } catch (error) {
       console.error('Failed to delete file:', error);
       setError('Failed to delete file: ' + error.message);
+    }
+  };
+
+  // Handle file download
+  const handleDownloadFile = async (fileName, e) => {
+    e.stopPropagation(); // Prevent any parent click events
+    
+    try {
+      if (!isConnected || !telegramClient) {
+        setError('Not connected to Telegram. Please authenticate first.');
+        return;
+      }
+      
+      setError(null);
+      setSuccess(null);
+      
+      // Find the file in the current folder to get its message_id
+      const folder = findFolderByPath(fileStructure, currentPath);
+      if (!folder) {
+        setError(`Folder not found: ${currentPath}`);
+        return;
+      }
+      
+      const fileToDownload = folder.files.find(f => f.filename === fileName);
+      if (!fileToDownload) {
+        setError(`File not found: ${fileName}`);
+        return;
+      }
+      
+      const messageId = fileToDownload.message_id;
+      if (!messageId) {
+        setError(`No message ID found for file: ${fileName}`);
+        return;
+      }
+      
+      setSuccess(`Preparing to download ${fileName}...`);
+      
+      // Get the file directly from Telegram using TDLib
+      try {
+        // First, get the message to find the file ID
+        const message = await telegramClient.send({
+          '@type': 'getMessage',
+          'chat_id': CHAT_ID,
+          'message_id': messageId
+        });
+        
+        if (!message || !message.content || message.content['@type'] !== 'messageDocument') {
+          setError(`Message does not contain a downloadable file`);
+          return;
+        }
+        
+        // Get the file ID from the message
+        const fileId = message.content.document.document.id;
+        
+        if (!fileId) {
+          setError(`Could not find file ID in message`);
+          return;
+        }
+        
+        // Download the file using TDLib
+        const file = await telegramClient.send({
+          '@type': 'downloadFile',
+          'file_id': fileId,
+          'priority': 1,
+          'offset': 0,
+          'limit': 0,
+          'synchronous': true
+        });
+        
+        // Check if the file is downloaded
+        if (file.local && file.local.is_downloading_completed) {
+          // Create a blob URL from the file path
+          const filePath = file.local.path;
+          
+          if (filePath) {
+            // Use the file path to create a download link
+            const link = document.createElement('a');
+            link.href = `tdweb://download/${filePath}`;
+            link.download = fileName;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            setSuccess(`Downloaded ${fileName} successfully`);
+            return;
+          }
+        }
+        
+        // If we can't download directly, try using the Telegram Web API
+        // This is a fallback method that works in most browsers
+        const downloadUrl = `https://api.telegram.org/file/bot${telegramClient.apiToken}/getFile?file_id=${fileId}`;
+        
+        // Create and click a download link
+        const link = document.createElement('a');
+        link.href = downloadUrl;
+        link.download = fileName;
+        link.target = '_blank'; // Open in new tab if direct download doesn't work
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        setSuccess(`Download initiated for ${fileName}`);
+      } catch (downloadError) {
+        console.error('Error downloading file:', downloadError);
+        setError(`Error downloading file: ${downloadError.message}`);
+      }
+    } catch (error) {
+      console.error('Failed to download file:', error);
+      setError('Failed to download file: ' + error.message);
     }
   };
 
@@ -807,20 +1002,36 @@ const FileExplorer = () => {
                       <div className="file-icon">{getFileIcon(file.filename)}</div>
                       <span className="file-name">{file.filename}</span>
                     </div>
-                    <button
-                      onClick={(e) => handleDeleteFile(file.filename, e)}
-                      style={{
-                        background: 'none',
-                        border: 'none',
-                        cursor: 'pointer',
-                        color: '#dc3545',
-                        padding: '4px',
-                        marginLeft: '8px'
-                      }}
-                      title="Delete file"
-                    >
-                      <FaTrash size={14} />
-                    </button>
+                    <div style={{ display: 'flex' }}>
+                      <button
+                        onClick={(e) => handleDownloadFile(file.filename, e)}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          cursor: 'pointer',
+                          color: '#0d6efd',
+                          padding: '4px',
+                          marginLeft: '8px'
+                        }}
+                        title="Download file"
+                      >
+                        <FaArrowUp style={{ transform: 'rotate(180deg)' }} size={14} />
+                      </button>
+                      <button
+                        onClick={(e) => handleDeleteFile(file.filename, e)}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          cursor: 'pointer',
+                          color: '#dc3545',
+                          padding: '4px',
+                          marginLeft: '8px'
+                        }}
+                        title="Delete file"
+                      >
+                        <FaTrash size={14} />
+                      </button>
+                    </div>
                   </div>
                 </div>
               ))}
