@@ -1,6 +1,8 @@
 import { TELEGRAM_API_ID, TELEGRAM_API_HASH, CHAT_ID } from './constants';
+import { createEmptyFileStructure, parseFileStructure, serializeFileStructure } from '../../utils/fileStructureUtils';
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useContext } from 'react';
+import { TelegramContext } from '../../context/TelegramContext';
 import './TelegramMessenger.css';
 
 const TelegramMessenger = () => {
@@ -27,6 +29,15 @@ const TelegramMessenger = () => {
   // Message ID for editing messages
   const [messageId, setMessageId] = useState(null);
   
+  // Access the Telegram context
+  const { 
+    setFileStructure, 
+    setIsFileStructureLoaded,
+    setTelegramClient,
+    setIsConnected: setContextIsConnected,
+    setMessageId: setContextMessageId
+  } = useContext(TelegramContext);
+  
   // Find message with METADATA_STORAGE prefix to enable message editing
   const findMessageId = useCallback(async () => {
     if (!clientRef.current || !getChatsPromiseRef.current) return null;
@@ -52,9 +63,29 @@ const TelegramMessenger = () => {
         const foundId = result.messages[0].id;
         console.log("Found METADATA_STORAGE message with ID:", foundId);
         setMessageId(foundId);
+        setContextMessageId(foundId);
+        
+        // Load file structure from message
+        try {
+          const messageContent = result.messages[0].content;
+          if (messageContent && messageContent.text && messageContent.text.text) {
+            const parsedStructure = parseFileStructure(messageContent.text.text);
+            console.log("Loaded file structure:", parsedStructure);
+            setFileStructure(parsedStructure);
+            setIsFileStructureLoaded(true);
+          }
+        } catch (error) {
+          console.error("Error loading file structure:", error);
+          setFileStructure(createEmptyFileStructure());
+        setIsFileStructureLoaded(true);
+          setIsFileStructureLoaded(true);
+        }
+        
         return foundId;
       } else {
         console.log("No METADATA_STORAGE messages found");
+        setFileStructure(createEmptyFileStructure());
+        setIsFileStructureLoaded(true);
         return null;
       }
     } catch (error) {
@@ -88,6 +119,7 @@ const TelegramMessenger = () => {
               });
               console.log("getChat succeeded:", response);
               setIsConnected(true);
+        setContextIsConnected(true);
               resolve(true);
             } catch (error) {
               console.log("getChat failed, trying getChats instead. Error:", error);
@@ -105,6 +137,7 @@ const TelegramMessenger = () => {
                 });
                 console.log("Chats fetched successfully:", chatData);
                 setIsConnected(true);
+        setContextIsConnected(true);
                 resolve(chatData);
               } catch (getChatsError) {
                 console.error("Error fetching chats with getChats:", getChatsError);
@@ -139,6 +172,7 @@ const TelegramMessenger = () => {
         });
         
         clientRef.current = client;
+        setTelegramClient(client);
         console.log("TDLib client created");
         
         // Set up event handling before setting parameters
@@ -236,6 +270,8 @@ const TelegramMessenger = () => {
                   console.log("Authorization completed successfully");
                   setStatus('Connected to Telegram');
                   setIsConnected(true);
+                  setContextIsConnected(true);
+        setContextIsConnected(true);
                   setAuthState('ready');
                   
                   // Initialize data and find message ID after a short delay
@@ -418,6 +454,40 @@ const TelegramMessenger = () => {
       throw error;
     }
   };
+
+  // Update file structure in Telegram
+  const updateFileStructure = async (updatedStructure) => {
+    try {
+      setFileStructure(updatedStructure);
+      
+      // Serialize the file structure to message text
+      const messageText = serializeFileStructure(updatedStructure);
+      
+      // If we have a messageId, edit that message, otherwise send a new one
+      if (messageId) {
+        await editMessage(messageText, messageId, CHAT_ID);
+      } else {
+        const result = await sendMessage(messageText, CHAT_ID);
+        // If this is the first time sending the message, we need to update the messageId
+        if (result && result.id && !messageId) {
+          setMessageId(result.id);
+          setContextMessageId(result.id);
+        }
+      }
+      
+      return true;
+    } catch (error) {
+      console.error('Failed to update file structure:', error);
+      setStatus(`Error: ${error.message || 'Failed to update file structure'}`);
+      return false;
+    }
+  };
+  
+  // Expose the updateFileStructure function to the context
+  useEffect(() => {
+    // Add a method to the window object that the FileExplorer can call
+    window.updateTelegramFileStructure = updateFileStructure;
+  }, [messageId]);
 
   // Send a new message to Telegram
   const sendMessage = async (newMessage, chat_id) => {

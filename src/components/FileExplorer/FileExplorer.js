@@ -1,6 +1,9 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useContext } from 'react';
 import './FileExplorer.css';
 import { FaFile, FaFileImage, FaFileAlt, FaFileCode, FaFolder, FaTrash, FaArrowUp } from 'react-icons/fa';
+import { createEmptyFileStructure, findFolderByPath, createFolder, deleteFolder, moveFolder, addFile, deleteFile, moveFile } from '../../utils/fileStructureUtils';
+import { TelegramContext } from '../../context/TelegramContext';
+import { CHAT_ID } from '../TelegramMessenger/constants';
 
 // Helper function to determine the appropriate icon based on file extension
 const getFileIcon = (filename) => {
@@ -26,46 +29,75 @@ const getFileIcon = (filename) => {
 };
 
 const FileExplorer = () => {
-  const [fileStructure, setFileStructure] = useState(null);
   const [currentPath, setCurrentPath] = useState('/');
   const [currentFolder, setCurrentFolder] = useState(null);
-  const [files, setFiles] = useState([]);
   const fileInputRef = useRef(null);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [uploading, setUploading] = useState(false);
-
+  
+  // Access the Telegram context
+  const { 
+    fileStructure, 
+    updateFileStructure, 
+    isFileStructureLoaded, 
+    isConnected,
+    telegramClient
+  } = useContext(TelegramContext);
+  
+  // Update current folder when file structure or path changes
   useEffect(() => {
-    fetchFileStructure();
-  }, []);
+    if (fileStructure) {
+      updateCurrentFolder();
+    }
+  }, [fileStructure, currentPath]);
+  
+  // Update current folder based on current path
+  const updateCurrentFolder = () => {
+    if (currentPath === '/') {
+      setCurrentFolder(fileStructure);
+      return;
+    }
+    
+    const folder = findFolderByPath(fileStructure, currentPath);
+    if (folder) {
+      setCurrentFolder(folder);
+    } else {
+      // If folder not found, reset to root
+      setCurrentPath('/');
+      setCurrentFolder(fileStructure);
+    }
+  };
 
-  const createFolder = async (folderName) => {
+  const handleCreateFolder = async (folderName) => {
     try {
       setError(null);
       setSuccess(null);
       
-      const response = await fetch('https://ee44-192-140-152-195.ngrok-free.app/folder/create', {
-        method: 'POST',
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          parent_path: currentPath,
-          folder_name: folderName
-        })
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        setError(data.detail || 'Failed to create folder');
+      if (!isConnected || !telegramClient) {
+        setError('Not connected to Telegram. Please authenticate first.');
         return;
       }
-
-      setSuccess(data.message);
-      fetchFileStructure(); // Refresh the file structure
+      
+      // Validate folder name
+      if (!folderName || folderName.includes('/')) {
+        setError('Invalid folder name. Folder name cannot be empty or contain "/"');
+        return;
+      }
+      
+      // Create folder in the file structure
+      const updatedStructure = createFolder(fileStructure, currentPath, folderName);
+      
+      // Update the file structure in Telegram
+      const success = await window.updateTelegramFileStructure(updatedStructure);
+      
+      if (success) {
+        setSuccess(`Folder "${folderName}" created successfully`);
+      } else {
+        setError('Failed to create folder');
+      }
     } catch (error) {
+      console.error('Failed to create folder:', error);
       setError('Failed to create folder: ' + error.message);
     }
   };
@@ -73,7 +105,7 @@ const FileExplorer = () => {
   const handleNewFolderClick = () => {
     const folderName = prompt('Enter folder name:');
     if (folderName) {
-      createFolder(folderName);
+      handleCreateFolder(folderName);
     }
   };
 
@@ -88,112 +120,32 @@ const FileExplorer = () => {
       setError(null);
       setSuccess(null);
       
-      const folderPath = currentPath === '/' ? `/${folderName}` : `${currentPath}/${folderName}`;
-      const response = await fetch('https://ee44-192-140-152-195.ngrok-free.app/folder/delete', {
-        method: 'POST',
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          folder_path: folderPath
-        })
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        setError(data.detail || 'Failed to delete folder');
+      if (!isConnected || !telegramClient) {
+        setError('Not connected to Telegram. Please authenticate first.');
         return;
       }
-
-      setSuccess(data.message);
-      fetchFileStructure(); // Refresh the file structure
+      
+      const folderPath = currentPath === '/' ? `/${folderName}` : `${currentPath}/${folderName}`;
+      
+      // Delete folder from the file structure
+      const updatedStructure = deleteFolder(fileStructure, folderPath);
+      
+      // Update the file structure in Telegram
+      const success = await window.updateTelegramFileStructure(updatedStructure);
+      
+      if (success) {
+        setSuccess(`Folder "${folderName}" deleted successfully`);
+      } else {
+        setError('Failed to delete folder');
+      }
     } catch (error) {
+      console.error('Failed to delete folder:', error);
       setError('Failed to delete folder: ' + error.message);
     }
   };
 
-  const fetchFileStructure = async () => {
-    try {
-      console.log('Attempting to fetch file structure...');
-      const response = await fetch('https://ee44-192-140-152-195.ngrok-free.app/get_metadata', {
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
-        }
-      });
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      
-      if (!response.headers.get('content-type')?.includes('application/json')) {
-        throw new Error('Response is not JSON');
-      }
-      const data = await response.json();
-      
-      const processedData = {
-        name: 'root',
-        files: Array.isArray(data.files) ? data.files.map(file => ({
-          filename: file.filename || file.name,
-          message_id: file.message_id,
-          size: file.size,
-          type: file.type
-        })) : [],
-        subfolders: Array.isArray(data.subfolders) ? data.subfolders.map(folder => ({
-          name: folder.name,
-          files: folder.files || [],
-          subfolders: folder.subfolders || []
-        })) : []
-      };
-      
-      setFileStructure(processedData);
-      
-      // Update current folder based on current path
-      if (currentPath === '/') {
-        setCurrentFolder(processedData);
-      } else {
-        const pathSegments = currentPath.split('/').filter(Boolean);
-        let current = processedData;
-        
-        for (const segment of pathSegments) {
-          const nextFolder = current.subfolders.find(folder => folder.name === segment);
-          if (!nextFolder) {
-            // If folder not found, reset to root
-            setCurrentPath('/');
-            setCurrentFolder(processedData);
-            return;
-          }
-          current = nextFolder;
-        }
-        setCurrentFolder(current);
-      }
-    } catch (error) {
-      console.error('Error setting up file structure:', error);
-      const emptyStructure = { name: 'root', files: [], subfolders: [] };
-      setFileStructure(emptyStructure);
-      setCurrentFolder(emptyStructure);
-      setCurrentPath('/');
-    }
-  };
-  
-  const updateCurrentFolder = (structure, path) => {
-    if (path === '/') {
-      setCurrentFolder(structure);
-      return;
-    }
-
-    const pathSegments = path.split('/').filter(Boolean);
-    let current = structure;
-
-    for (const segment of pathSegments) {
-      current = current.subfolders.find(folder => folder.name === segment);
-      if (!current) break;
-    }
-
-    setCurrentFolder(current || structure);
-  };
+  // This function is no longer needed as we're using the TelegramContext
+  // to manage the file structure
 
   const handlePathClick = (index) => {
     if (index === 0) {
@@ -312,6 +264,11 @@ const FileExplorer = () => {
     e.stopPropagation(); // Prevent event bubbling to parent containers
     e.currentTarget.classList.remove('drag-over');
     
+    if (!isConnected || !telegramClient) {
+      setError('Not connected to Telegram. Please authenticate first.');
+      return;
+    }
+    
     // Handle file drops from the file system
     if (e.dataTransfer.files.length > 0) {
       const droppedFiles = Array.from(e.dataTransfer.files);
@@ -331,26 +288,9 @@ const FileExplorer = () => {
         (currentPath === '/' ? `/${folderName}` : `${currentPath}/${folderName}`) : 
         currentPath;
       
-      // Get the parent path of the source folder
-      const sourcePathSegments = sourcePath.split('/').filter(Boolean);
-      const sourceParentPathSegments = sourcePathSegments.slice(0, -1);
-      const sourceParentPath = sourceParentPathSegments.length === 0 ? '/' : '/' + sourceParentPathSegments.join('/');
-      
       // Normalize paths for comparison
       const normalizedSourcePath = sourcePath.startsWith('/') ? sourcePath : `/${sourcePath}`;
       const normalizedDestPath = destPath.startsWith('/') ? destPath : `/${destPath}`;
-      const normalizedSourceParentPath = sourceParentPath.startsWith('/') ? sourceParentPath : `/${sourceParentPath}`;
-      
-      // Check if we're dropping to the same folder (current location)
-      if (normalizedSourceParentPath === normalizedDestPath) {
-        setSuccess('Folder is already in this location');
-        return;
-      }
-      
-      // Don't allow dropping a folder into itself or its child
-      // Normalize paths for proper comparison
-      const normalizedSourcePathForComparison = normalizedSourcePath.endsWith('/') ? normalizedSourcePath : `${normalizedSourcePath}/`;
-      const normalizedDestPathForComparison = normalizedDestPath.endsWith('/') ? normalizedDestPath : `${normalizedDestPath}/`;
       
       // Check if source and destination are the same folder
       if (normalizedSourcePath === normalizedDestPath) {
@@ -359,7 +299,7 @@ const FileExplorer = () => {
       }
       
       // Check if destination is a subfolder of source
-      if (normalizedDestPathForComparison.startsWith(normalizedSourcePathForComparison)) {
+      if (normalizedDestPath.startsWith(normalizedSourcePath + '/')) {
         setError('Cannot move a folder into its subfolder');
         return;
       }
@@ -371,28 +311,19 @@ const FileExplorer = () => {
         setError(null);
         setSuccess(null);
         
-        const response = await fetch('https://ee44-192-140-152-195.ngrok-free.app/folder/move', {
-          method: 'POST',
-          headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            source_path: sourcePath,
-            dest_path: destPath
-          })
-        });
-
-        const data = await response.json();
-
-        if (!response.ok) {
-          setError(data.detail || 'Failed to move folder');
-          return;
+        // Move folder in the file structure
+        const updatedStructure = moveFolder(fileStructure, sourcePath, destPath);
+        
+        // Update the file structure in Telegram
+        const success = await window.updateTelegramFileStructure(updatedStructure);
+        
+        if (success) {
+          setSuccess(`Folder moved successfully to ${destPath}`);
+        } else {
+          setError('Failed to move folder');
         }
-
-        setSuccess(data.message);
-        fetchFileStructure(); // Refresh the file structure
       } catch (error) {
+        console.error('Failed to move folder:', error);
         setError('Failed to move folder: ' + error.message);
       }
     }
@@ -411,14 +342,7 @@ const FileExplorer = () => {
       const sourceParentPathSegments = sourcePathSegments.slice(0, -1);
       const sourceParentPath = sourceParentPathSegments.length === 0 ? '/' : '/' + sourceParentPathSegments.join('/');
       
-      // Normalize paths for comparison
-      const normalizedSourceParentPath = sourceParentPath.startsWith('/') ? sourceParentPath : `/${sourceParentPath}`;
-      const normalizedDestPath = destPath.startsWith('/') ? destPath : `/${destPath}`;
-      
       // Check if we're dropping to the same folder (current location)
-      // We need to compare both the normalized paths AND the original paths
-      // This ensures we can move between sibling directories with similar names
-      // For sibling folders, we need to check the full path including the filename
       const sourceFullPath = sourceFilePath;
       const destFullPath = destPath === '/' ? `/${fileName}` : `${destPath}/${fileName}`;
       
@@ -427,9 +351,6 @@ const FileExplorer = () => {
         return;
       }
       
-      // If the file is in a sibling folder, allow the move to proceed
-      // No additional check needed here as we want to allow moves between sibling folders
-      
       console.log('Source File Path:', sourceFilePath);
       console.log('Destination Path:', destPath);
     
@@ -437,93 +358,152 @@ const FileExplorer = () => {
         setError(null);
         setSuccess(null);
         
-        const response = await fetch('https://ee44-192-140-152-195.ngrok-free.app/file/move', {
-          method: 'POST',
-          headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            source_path: sourceParentPath,
-            filename: fileName,
-            dest_path: destPath
-          })
-        });
-
-        const data = await response.json();
-
-        if (!response.ok) {
-          setError(data.detail || 'Failed to move file');
-          return;
+        // Move file in the file structure
+        const updatedStructure = moveFile(fileStructure, sourceParentPath, fileName, destPath);
+        
+        // Update the file structure in Telegram
+        const success = await window.updateTelegramFileStructure(updatedStructure);
+        
+        if (success) {
+          setSuccess(`File "${fileName}" moved successfully to ${destPath}`);
+        } else {
+          setError('Failed to move file');
         }
-
-        setSuccess(data.message || 'File moved successfully');
-        fetchFileStructure(); // Refresh the file structure
       } catch (error) {
+        console.error('Failed to move file:', error);
         setError('Failed to move file: ' + error.message);
       }
     }
   };
 
   const handleFiles = (newFiles) => {
-    // Add files to the state
-    setFiles(prevFiles => [
-      ...prevFiles,
-      ...newFiles.map(file => ({
-        name: file.name,
-        size: file.size,
-        type: file.type,
-        lastModified: file.lastModified,
-        file: file // Store the actual file object for upload
-      }))
-    ]);
-    
     // Upload files to the current directory
     uploadFiles(newFiles);
   };
   
   const uploadFiles = async (filesToUpload) => {
     try {
+      if (!isConnected || !telegramClient) {
+        setError('Not connected to Telegram. Please authenticate first.');
+        return;
+      }
+      
+      // Check if the updateTelegramFileStructure function is available
+      if (!window.updateTelegramFileStructure || typeof window.updateTelegramFileStructure !== 'function') {
+        console.error('updateTelegramFileStructure function is not available');
+        setError('File upload system is not properly initialized. Please refresh the page and try again.');
+        return;
+      }
+      
       setError(null);
       setSuccess(null);
       setUploading(true);
       
+      // Process files one by one
       for (const file of filesToUpload) {
-        const formData = new FormData();
-        formData.append('folder_path', currentPath);
-        formData.append('file', file);
-        
-        const response = await fetch('https://ee44-192-140-152-195.ngrok-free.app/file/upload', {
-          method: 'POST',
-          body: formData
-        });
-        
-        const data = await response.json();
-        
-        if (!response.ok) {
-          // Handle error response format
-          if (data.detail && Array.isArray(data.detail)) {
-            const errorMessages = data.detail.map(err => err.msg || 'Unknown error').join(', ');
-            setError(`Failed to upload ${file.name}: ${errorMessages}`);
-          } else {
-            setError(data.detail || `Failed to upload ${file.name}`);
+        try {
+          console.log(`Starting upload for file: ${file.name}`);
+          
+          // Check if file already exists in the current path
+          const folderExists = findFolderByPath(fileStructure, currentPath);
+          if (folderExists) {
+            const fileExists = folderExists.files.some(f => f.filename === file.name);
+            if (fileExists) {
+              if (!window.confirm(`File ${file.name} already exists. Do you want to replace it?`)) {
+                continue; // Skip this file if user doesn't want to replace
+              }
+              // If replacing, we'll continue with the upload
+            }
           }
-          setUploading(false);
-          return;
-        }
-        
-        // Handle success response format
-        if (data.message_id && Array.isArray(data.message_id) && data.message_id.length > 1) {
-          setSuccess(data.message_id[1] || `Successfully uploaded ${file.name}`);
-        } else {
-          setSuccess(data.message || `Successfully uploaded ${file.name}`);
+          
+          // Read the file as an ArrayBuffer with proper error handling
+          let fileBuffer;
+          try {
+            fileBuffer = await file.arrayBuffer();
+          } catch (readError) {
+            console.error(`Error reading file ${file.name}:`, readError);
+            setError(`Failed to read file ${file.name}: ${readError.message || 'Unknown error'}`);
+            continue;
+          }
+          
+          // Create a Uint8Array from the ArrayBuffer and check if it's valid
+          const fileData = new Uint8Array(fileBuffer);
+          
+          if (!fileData || fileData.length === 0) {
+            setError(`Failed to read file ${file.name}: Empty file data`);
+            continue;
+          }
+          
+          // Check file size - TDLib has limitations
+          if (fileData.length > 50 * 1024 * 1024) { // 50MB limit
+            setError(`File ${file.name} is too large (${(fileData.length / (1024 * 1024)).toFixed(2)}MB). Maximum size is 50MB.`);
+            continue;
+          }
+          
+          // Show progress message
+          setSuccess(`Uploading ${file.name} (${(fileData.length / 1024).toFixed(2)}KB)...`);
+          
+          // Send the file to Telegram with proper error handling
+          console.log(`Uploading file: ${file.name}, size: ${fileData.length} bytes`);
+          
+          // Make sure we wait for any pending operations before sending
+          await new Promise(resolve => setTimeout(resolve, 100));
+          
+          let result;
+          try {
+            result = await telegramClient.send({
+              '@type': 'sendMessage',
+              'chat_id': CHAT_ID,
+              'input_message_content': {
+                '@type': 'inputMessageDocument',
+                'document': {
+                  '@type': 'inputFileBlob',
+                  'name': file.name,
+                  'data': file
+                }
+              }
+            });
+            
+            console.log('Upload result:', result);
+          } catch (uploadError) {
+            console.error(`Error during Telegram upload for ${file.name}:`, uploadError);
+            setError(`Failed to upload ${file.name} to Telegram: ${uploadError.message || 'Unknown error'}`);
+            continue;
+          }
+          
+          if (result && result.id) {
+            // Add the file to our file structure
+            const updatedStructure = addFile(fileStructure, currentPath, file.name, result.id);
+            
+            // Update the file structure in Telegram
+            console.log('Updating file structure...');
+            try {
+              const success = await window.updateTelegramFileStructure(updatedStructure);
+              
+              if (success) {
+                setSuccess(`Successfully uploaded ${file.name}`);
+                console.log(`Successfully uploaded ${file.name}`);
+              } else {
+                setError(`Failed to update file structure for ${file.name}`);
+                console.error(`Failed to update file structure for ${file.name}`);
+              }
+            } catch (updateError) {
+              console.error(`Error updating file structure for ${file.name}:`, updateError);
+              setError(`File uploaded but failed to update file structure: ${updateError.message || 'Unknown error'}`);
+            }
+          } else {
+            setError(`Failed to upload ${file.name}: No message ID returned`);
+            console.error(`Failed to upload ${file.name}: No message ID returned`, result);
+          }
+        } catch (fileError) {
+          console.error(`Error uploading ${file.name}:`, fileError);
+          setError(`Failed to upload ${file.name}: ${fileError.message || 'Unknown error'}`);
         }
       }
       
-      // Refresh the file structure after upload
-      fetchFileStructure();
       setUploading(false);
     } catch (error) {
+      console.error('Failed to upload files:', error);
       setError('Failed to upload files: ' + error.message);
       setUploading(false);
     }
@@ -549,32 +529,27 @@ const FileExplorer = () => {
     }
 
     try {
+      if (!isConnected || !telegramClient) {
+        setError('Not connected to Telegram. Please authenticate first.');
+        return;
+      }
+      
       setError(null);
       setSuccess(null);
       
-      const folderPath = currentPath;
-      const response = await fetch(`${API_BASE_URL}/file/delete`, {
-        method: 'POST',
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          folder_path: folderPath,
-          filename: fileName
-        })
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        setError(data.detail || 'Failed to delete file');
-        return;
+      // Delete file from the file structure
+      const updatedStructure = deleteFile(fileStructure, currentPath, fileName);
+      
+      // Update the file structure in Telegram
+      const success = await window.updateTelegramFileStructure(updatedStructure);
+      
+      if (success) {
+        setSuccess(`File "${fileName}" deleted successfully`);
+      } else {
+        setError('Failed to delete file');
       }
-
-      setSuccess(data.message || `Successfully deleted ${fileName}`);
-      fetchFileStructure(); // Refresh the file structure
     } catch (error) {
+      console.error('Failed to delete file:', error);
       setError('Failed to delete file: ' + error.message);
     }
   };
@@ -593,7 +568,13 @@ const FileExplorer = () => {
             </span>
           ))}
         </div>
-        <button className="new-folder-button" onClick={handleNewFolderClick}>New Folder</button>
+        <button 
+          className="new-folder-button" 
+          onClick={handleNewFolderClick}
+          disabled={!isConnected}
+        >
+          New Folder
+        </button>
       </nav>
       
       <main 
@@ -604,7 +585,11 @@ const FileExplorer = () => {
         onDragEnd={handleDragEnd}
       >
         <div className="action-buttons">
-          <button className="upload-button" onClick={handleUploadClick} disabled={uploading}>
+          <button 
+            className="upload-button" 
+            onClick={handleUploadClick} 
+            disabled={uploading || !isConnected}
+          >
             {uploading ? 'Uploading...' : 'Upload Files'}
           </button>
           <input
@@ -627,6 +612,11 @@ const FileExplorer = () => {
               e.preventDefault();
               e.stopPropagation();
               e.currentTarget.classList.remove('drag-over');
+              
+              if (!isConnected || !telegramClient) {
+                setError('Not connected to Telegram. Please authenticate first.');
+                return;
+              }
               
               // Handle file drops from the file system
               if (e.dataTransfer.files.length > 0) {
@@ -657,37 +647,25 @@ const FileExplorer = () => {
                   return;
                 }
                 
-                // Move folder to parent directory
-                (async () => {
-                  try {
-                    setError(null);
-                    setSuccess(null);
-                    
-                    const response = await fetch('https://ee44-192-140-152-195.ngrok-free.app/folder/move', {
-                      method: 'POST',
-                      headers: {
-                        'Accept': 'application/json',
-                        'Content-Type': 'application/json'
-                      },
-                      body: JSON.stringify({
-                        source_path: sourcePath,
-                        dest_path: parentPath
-                      })
-                    });
-
-                    const data = await response.json();
-
-                    if (!response.ok) {
-                      setError(data.detail || 'Failed to move folder');
-                      return;
-                    }
-
-                    setSuccess(data.message);
-                    fetchFileStructure(); // Refresh the file structure
-                  } catch (error) {
-                    setError('Failed to move folder: ' + error.message);
+                try {
+                  setError(null);
+                  setSuccess(null);
+                  
+                  // Move folder to parent directory
+                  const updatedStructure = moveFolder(fileStructure, sourcePath, parentPath);
+                  
+                  // Update the file structure in Telegram
+                  const success = await window.updateTelegramFileStructure(updatedStructure);
+                  
+                  if (success) {
+                    setSuccess(`Folder moved successfully to parent folder`);
+                  } else {
+                    setError('Failed to move folder');
                   }
-                })();
+                } catch (error) {
+                  console.error('Failed to move folder:', error);
+                  setError('Failed to move folder: ' + error.message);
+                }
               }
               // Handle file drops
               else if (dragData.startsWith('file:')) {
@@ -699,45 +677,23 @@ const FileExplorer = () => {
                 const sourceParentPathSegments = sourcePathSegments.slice(0, -1);
                 const sourceParentPath = sourceParentPathSegments.length === 0 ? '/' : '/' + sourceParentPathSegments.join('/');
                 
-                // Normalize paths for comparison
-                const normalizedSourceParentPath = sourceParentPath.startsWith('/') ? sourceParentPath : `/${sourceParentPath}`;
-                const normalizedParentPath = parentPath.startsWith('/') ? parentPath : `/${parentPath}`;
-                
-                // Check if we're dropping to the same folder
-                // Compare both normalized and original paths to ensure accurate comparison
-                if (normalizedSourceParentPath === normalizedParentPath && sourceParentPath === parentPath) {
-                  setSuccess('File is already in this location');
-                  return;
-                }
-                // We don't need additional checks here - if paths are different, allow the move
-                
                 try {
                   setError(null);
                   setSuccess(null);
                   
-                  const response = await fetch('https://ee44-192-140-152-195.ngrok-free.app/file/move', {
-                    method: 'POST',
-                    headers: {
-                      'Accept': 'application/json',
-                      'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                      source_path: sourceParentPath,
-                      filename: fileName,
-                      dest_path: parentPath
-                    })
-                  });
-
-                  const data = await response.json();
-
-                  if (!response.ok) {
-                    setError(data.detail || 'Failed to move file');
-                    return;
+                  // Move file to parent directory
+                  const updatedStructure = moveFile(fileStructure, sourceParentPath, fileName, parentPath);
+                  
+                  // Update the file structure in Telegram
+                  const success = await window.updateTelegramFileStructure(updatedStructure);
+                  
+                  if (success) {
+                    setSuccess(`File "${fileName}" moved successfully to parent folder`);
+                  } else {
+                    setError('Failed to move file');
                   }
-
-                  setSuccess(data.message || 'File moved successfully');
-                  fetchFileStructure(); // Refresh the file structure
                 } catch (error) {
+                  console.error('Failed to move file:', error);
                   setError('Failed to move file: ' + error.message);
                 }
               }
