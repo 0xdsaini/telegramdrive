@@ -1,186 +1,260 @@
 import { TELEGRAM_API_ID, TELEGRAM_API_HASH, CHAT_ID } from './constants';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import './TelegramMessenger.css';
 
-let messageId = '';
-
 const TelegramMessenger = () => {
+  // State for message input and status
   const [message, setMessage] = useState('');
   const [status, setStatus] = useState('Initializing...');
   const [isSending, setIsSending] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
+  
+  // Authentication states
   const [phoneNumber, setPhoneNumber] = useState('');
   const [verificationCode, setVerificationCode] = useState('');
   const [authState, setAuthState] = useState('initial'); // initial, waitPhoneNumber, waitCode, ready
+  
+  // File handling states
   const [selectedFile, setSelectedFile] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
+  
+  // References
   const clientRef = useRef(null);
   const getChatsPromiseRef = useRef(null);
-
-  // Global variable:
-  // Best practice, use React Context for pan-Component global variable.
-  // not good practice: window.var = <something> works but can be overridden in runtime
-  // use window.var method if this useState doesn't work.
-  const [messageId, setMessageId] = useState([]);
-
   const inputRef = useRef(null);
   
-  const findMessageId = async () => {
-
-    if (!clientRef.current || !getChatsPromiseRef.current) return;
-    // Wait for the getChats promise to resolve
-    const chatData = await getChatsPromiseRef.current;
-    console.log("Chat Data:", chatData); 
-    console.error("Finding messageId...");
-
-    console.error("Chat Id", CHAT_ID);
+  // Message ID for editing messages
+  const [messageId, setMessageId] = useState(null);
+  
+  // Find message with METADATA_STORAGE prefix to enable message editing
+  const findMessageId = useCallback(async () => {
+    if (!clientRef.current || !getChatsPromiseRef.current) return null;
+    
     try {
-
-      // Its not detecting let's say METADATA_STORAGE<any text>
+      // Wait for the getChats promise to resolve
+      await getChatsPromiseRef.current;
+      console.log("Searching for METADATA_STORAGE message...");
+      
+      // Search for messages containing METADATA_STORAGE
       const result = await clientRef.current.send({
         "@type": "searchChatMessages",
-        "chat_id": -4744438579,
+        "chat_id": CHAT_ID,
         "query": "METADATA_STORAGE",
         "limit": 5,
         "from_message_id": 0,
         "offset": 0,
         "only_missed": false
-      })
-
-      console.error("finding messageId...")
-      // console for searchChatMessages:
-      console.error("searchChatMessages result:", result);
-      console.error("searchChatMessages result messages[0] id:", result.messages[0].id);
-      setMessageId(result.messages[0].id);
-
-      console.error(messageId);
-
-      // also return the found id
-      return result.messages[0].id;
-
-      // // Try to get chatHistory and we'll find that message ourselves
-      // const result = await clientRef.current.send({
-      //   "@type": "getChatHistory",
-      //   "chat_id": CHAT_ID,
-      //   "from_message_id": 0,
-      //   "offset": 0,
-      //   "limit": 50, // NOTICE: limit is 100 ONLY
-      //   "only_local": false
-      // });
-      // // console.log("Chat History fetched:", result);
-      // // Check if the result contains messages
-      // if (!result.messages || result.messages.length === 0) {
-      //   console.log("No messages found");
-      //   return;
-      // }
-      // // search for message containing our prefix
-      // // const message = result.messages.find(msg => msg.content.text.text.includes("METADATA_STORAGE"));
-      // console.error("messages: ", result.messages);
-
-
-
-      // Set messageId to the ID of the first message in the result
-      // setMessageId(result.messages[0].id);
-
-    }
-    catch (error) {
+      });
+      
+      // Check if we found any messages
+      if (result.messages && result.messages.length > 0) {
+        const foundId = result.messages[0].id;
+        console.log("Found METADATA_STORAGE message with ID:", foundId);
+        setMessageId(foundId);
+        return foundId;
+      } else {
+        console.log("No METADATA_STORAGE messages found");
+        return null;
+      }
+    } catch (error) {
       console.error('Error fetching message ID:', error);
+      return null;
     }
-  };
+  }, []);
 
   // Initialize TDLib
   useEffect(() => {
-
     // Check if TDLib is available
     if (!window.tdweb || !window.tdweb.default) {
       setStatus('Error: TDLib not found. Please check if tdweb.js is properly loaded.');
       return;
     }
 
+    // Initialize data after successful authentication
+    const initializeData = async () => {
+      if (!clientRef.current) return;
+      
+      try {
+        console.log("Initializing data...");
+        // Create a promise to fetch chats that can be awaited later
+        getChatsPromiseRef.current = new Promise(async (resolve) => {
+          try {
+            // Try to get a specific chat first
+            try {
+              const response = await clientRef.current.send({
+                "@type": "getChat",
+                "chat_id": CHAT_ID
+              });
+              console.log("getChat succeeded:", response);
+              setIsConnected(true);
+              resolve(true);
+            } catch (error) {
+              console.log("getChat failed, trying getChats instead. Error:", error);
+              
+              // If getting a specific chat fails, try to get all chats
+              // Add a delay to ensure authorization is complete
+              console.log("Adding delay before getChats...");
+              await new Promise(resolve => setTimeout(resolve, 5000));
+              console.log("Delay finished, now trying getChats");
+              
+              try {
+                const chatData = await clientRef.current.send({
+                  "@type": "getChats",
+                  "limit": 2000
+                });
+                console.log("Chats fetched successfully:", chatData);
+                setIsConnected(true);
+                resolve(chatData);
+              } catch (getChatsError) {
+                console.error("Error fetching chats with getChats:", getChatsError);
+                resolve(null);
+              }
+            }
+          } catch (chatError) {
+            console.error("Error in chat initialization:", chatError);
+            // Don't reject, just resolve with null to prevent unhandled promise rejections
+            resolve(null);
+          }
+        });
+        console.log("Initializing data finished");
+      } catch (error) {
+        console.error("Error initializing data:", error);
+      }
+    };
+
     const initTelegram = async () => {
       try {
+        console.log("Starting TDLib initialization...");
         setStatus('Initializing TDLib...');
 
         // Create TDLib client
         const TdClient = window.tdweb.default;
         const client = new TdClient({
-          logVerbosityLevel: 1,
-          jsLogVerbosityLevel: 'info',
+          logVerbosityLevel: 2, // Increased for more detailed logs
+          jsLogVerbosityLevel: 'debug', // Changed to debug for more detailed logs
           mode: 'wasm',
           api_id: TELEGRAM_API_ID,
           api_hash: TELEGRAM_API_HASH,
         });
         
         clientRef.current = client;
+        console.log("TDLib client created");
         
-        // Set TDLib parameters
-        client.send({
-          "@type": "setTdlibParameters",
-          "use_test_dc": false,
-          // "use_database": false, // From official repo: td@github/example/web/tdweb/src/index.js, line 41 -> [options.useDatabase=true] - Pass false to use TDLib without database and secret chats. It will significantly improve loading time, but some functionality will be unavailable.
-          "database_directory": "/tdlib/dbfs",
-          "files_directory": "/tdlib/inboundfs",
-          "use_file_database": false,  // ⛔ Prevents storing files
-          "use_chat_info_database": true,
-          "use_message_database": true,
-          "use_secret_chats": false,
-          "api_id": TELEGRAM_API_ID,  // Replace with your API ID
-          "api_hash": TELEGRAM_API_HASH, // Replace with your API Hash
-          "system_language_code": "en",
-          "device_model": "Web",
-          "system_version": "TDLib",
-          "application_version": "1.0",
-          "enable_storage_optimizer": true,
-          "ignore_file_names": false,
-          "is_background": false
-      });
-        
-        setStatus('Connecting to Telegram...');
-        
-        // Set up event handling
+        // Set up event handling before setting parameters
         client.onUpdate = update => {
-
-          console.log("all update(disable this in onUpdate init function):", update);
           // Safely check if update exists and has a type
           if (!update || typeof update !== 'object') return;
           
           try {
-            console.log('TDLib update:', update);
-
-            // When a new message is sent, to obtain its message id, we'll need to listen for updateMessageSendSucceeded event
+            console.log("TDLib update received:", update["@type"]);
+            
+            // Handle message send success events
             if (update['@type'] === 'updateMessageSendSucceeded') {
-              console.error('Message sent successfully:', update.message);
-              if (update.message.content.text.text.includes("METADATA_STORAGE")) {
-                console.error("METADATA_STORAGE found in message:", update.message);
-                console.error("METADATA_STORAGE message id:", update.message.id);
+              console.log('Message sent successfully:', update.message);
+              if (update.message.content?.text?.text?.includes("METADATA_STORAGE")) {
+                console.log("METADATA_STORAGE message id:", update.message.id);
                 setMessageId(update.message.id);
               }
             }
             
+            // Handle authorization state changes
             if (update['@type'] === 'updateAuthorizationState' && update.authorization_state) {
               const currentAuthState = update.authorization_state['@type'];
-              console.log('Auth state:', currentAuthState);
+              console.log('Auth state changed to:', currentAuthState);
               
-              if (currentAuthState === 'authorizationStateWaitTdlibParameters') {
-                setStatus('Setting up TDLib parameters...');
-                setAuthState('initial'); 
-              } else if (currentAuthState === 'authorizationStateWaitPhoneNumber') {
-                setStatus('Please enter your phone number');
-                setAuthState('waitPhoneNumber');
-              } else if (currentAuthState === 'authorizationStateWaitCode') {
-                setStatus('Please enter the verification code');
-                setAuthState('waitCode');
-              } else if (currentAuthState === 'authorizationStateReady') {
-                setStatus('Connected to Telegram');
-                setIsConnected(true);
-                setAuthState('ready');
-                initializeData();
-                findMessageId();
-              } else if (currentAuthState === 'authorizationStateClosed') {
-                setStatus('Connection closed');
-                setIsConnected(false);
-                setAuthState('initial');
+              switch (currentAuthState) {
+                case 'authorizationStateWaitTdlibParameters':
+                  console.log("Waiting for TDLib parameters...");
+                  setStatus('Setting up TDLib parameters...');
+                  setAuthState('initial');
+                  
+                  // Send TDLib parameters immediately when we receive this state
+                  setTimeout(async () => {
+                    try {
+                      console.log("Sending TDLib parameters...");
+                      await client.send({
+                        "@type": "setTdlibParameters",
+                        "use_test_dc": false,
+                        "database_directory": "/tdlib/dbfs",
+                        "files_directory": "/tdlib/inboundfs",
+                        "use_file_database": false,  // Prevents storing files
+                        "use_chat_info_database": true,
+                        "use_message_database": true,
+                        "use_secret_chats": false,
+                        "api_id": TELEGRAM_API_ID,
+                        "api_hash": TELEGRAM_API_HASH,
+                        "system_language_code": "en",
+                        "device_model": "Web",
+                        "system_version": "TDLib",
+                        "application_version": "1.0",
+                        "enable_storage_optimizer": true,
+                        "ignore_file_names": false,
+                        "is_background": false
+                      });
+                      console.log("TDLib parameters sent successfully");
+                    } catch (paramError) {
+                      console.error("Error setting TDLib parameters:", paramError);
+                      setStatus(`Error: ${paramError.message || 'Failed to set TDLib parameters'}`);
+                    }
+                  }, 100);
+                  break;
+                  
+                case 'authorizationStateWaitEncryptionKey':
+                  console.log("Waiting for encryption key...");
+                  setStatus('Setting up encryption...');
+                  
+                  // Send empty encryption key
+                  setTimeout(async () => {
+                    try {
+                      console.log("Sending empty encryption key...");
+                      await client.send({
+                        "@type": "checkDatabaseEncryptionKey",
+                        "encryption_key": ""
+                      });
+                      console.log("Encryption key sent successfully");
+                    } catch (encryptionError) {
+                      console.error("Error setting encryption key:", encryptionError);
+                      setStatus(`Error: ${encryptionError.message || 'Failed to set encryption key'}`);
+                    }
+                  }, 100);
+                  break;
+                  
+                case 'authorizationStateWaitPhoneNumber':
+                  console.log("Ready for phone number input");
+                  setStatus('Please enter your phone number');
+                  setAuthState('waitPhoneNumber');
+                  break;
+                  
+                case 'authorizationStateWaitCode':
+                  console.log("Ready for verification code input");
+                  setStatus('Please enter the verification code');
+                  setAuthState('waitCode');
+                  break;
+                  
+                case 'authorizationStateReady':
+                  console.log("Authorization completed successfully");
+                  setStatus('Connected to Telegram');
+                  setIsConnected(true);
+                  setAuthState('ready');
+                  
+                  // Initialize data and find message ID after a short delay
+                  setTimeout(() => {
+                    initializeData();
+                    findMessageId();
+                  }, 1000);
+                  break;
+                  
+                case 'authorizationStateClosed':
+                  console.log("Connection closed");
+                  setStatus('Connection closed');
+                  setIsConnected(false);
+                  setAuthState('initial');
+                  break;
+                  
+                default:
+                  console.log("Unhandled auth state:", currentAuthState);
+                  break;
               }
             } else if (update['@type'] === 'error') {
               console.error('TDLib error:', update);
@@ -190,68 +264,29 @@ const TelegramMessenger = () => {
             console.error('Error handling TDLib update:', err);
           }
         };
+        
+        console.log("Event handler set up, proceeding with initialization...");
+        setStatus('Connecting to Telegram...');
 
       } catch (error) {
         console.error('TDLib initialization error:', error);
         setStatus(`Error: ${error.message || 'Failed to initialize TDLib'}`);
       }
     };
-
-        // Initialize data after successful authentication
-    const initializeData = async () => {
-      if (!clientRef.current) return;
-      
-      try {
-        // Create a promise to fetch chats that can be awaited later
-        getChatsPromiseRef.current = new Promise(async (resolve, reject) => {
-          try {
-            // Try to get a specific chat first
-            try {
-              await clientRef.current.send({
-                "@type": "getChat",
-                "chat_id": CHAT_ID // You might need to replace this with a valid chat ID
-              });
-              setIsConnected(true); // Update connection status on success
-              resolve(true);
-            } catch (error) {
-              console.log("getChat failed, trying getChats instead");
-              
-              // If getting a specific chat fails, try to get all chats
-              // Add a delay to ensure authorization is complete
-              await new Promise(resolve => setTimeout(resolve, 3000));
-              
-              const chatData = await clientRef.current.send({
-                "@type": "getChats",
-                "limit": 2000
-              });
-              console.log("Chats fetched:", chatData);
-              setIsConnected(true); // Update connection status on success
-              resolve(chatData);
-            }
-          } catch (chatError) {
-            console.error("Error fetching chats:", chatError);
-            // Don't reject here, just log the error and resolve with null
-            // This prevents unhandled promise rejections
-            resolve(null);
-          }
-        });
-      } catch (error) {
-        console.error("Error initializing data:", error);
-        // Don't throw the error, just log it
-      }
-    };
     
     // Initialize Telegram with a small delay to ensure the script is loaded
-    const timeoutId = setTimeout(initTelegram, 500);
+    console.log("Setting timeout for TDLib initialization...");
+    const timeoutId = setTimeout(initTelegram, 1000);
 
     // Cleanup function
     return () => {
+      console.log("Cleaning up TDLib resources...");
       clearTimeout(timeoutId);
       if (clientRef.current) {
         clientRef.current.close();
       }
     };
-  }, []);
+  }, [findMessageId]);
 
 
   const handleMessageChange = (e) => {
@@ -314,6 +349,7 @@ const TelegramMessenger = () => {
     }
   };
   
+  // Handle message submission
   const handleSubmit = async (e) => {
     e.preventDefault();
     
@@ -329,37 +365,28 @@ const TelegramMessenger = () => {
         throw new Error('Telegram client not initialized. Please try again.');
       }
 
-      await sendMessage(message, CHAT_ID);
-      setMessage("edited the same message");
-      console.error("sent message's id", messageId);
-      console.error("new message to send:", message);
-
-      setTimeout(() => {
-        console.error("editing message after 3 seconds", messageId, CHAT_ID);
-        editMessage("new message", messageId, CHAT_ID);
-      }, 3000);
-
-      setIsSending(false);
-      // if (messageId && messageId !== '') {
-      //   await editMessage(message, message_id, CHAT_ID);
-      // } else {
-      //   await sendMessage(message, CHAT_ID);
-      // }
+      // If we have a messageId, edit that message, otherwise send a new one
+      if (messageId) {
+        await editMessage(message, messageId, CHAT_ID);
+      } else {
+        await sendMessage(message, CHAT_ID);
+      }
+      
+      // Clear the message input after sending
+      setMessage('');
       
     } catch (error) {
-      console.error('Failed to edit message:', error);
-      setStatus(`Error: ${error.message || 'Failed to edit message'}`);
+      console.error('Failed to send/edit message:', error);
+      setStatus(`Error: ${error.message || 'Failed to send/edit message'}`);
     } finally {
       setIsSending(false);
     }
   };
 
-  // Edit message in telegram - function
+  // Edit an existing message in Telegram
   const editMessage = async (newMessage, message_id, chat_id) => {
+    console.log("Editing message with ID:", message_id);
 
-    console.error("Editing message", newMessage, message_id);
-
-    // Edit the message in the chat
     try {
       const result = await clientRef.current.send({
         '@type': 'editMessageText',
@@ -374,27 +401,32 @@ const TelegramMessenger = () => {
         }
       });
 
-      console.error('Message edited:', result);
+      console.log('Message edited successfully');
       setStatus('Message edited successfully');
-      // setMessage('');
-      setIsSending(false);
-      return;
-    } catch (editError) {
-      console.error('Error editing message:', editError);
+      
+      // Reset status after 3 seconds
+      setTimeout(() => {
+        if (isConnected) {
+          setStatus('Connected to Telegram');
+        }
+      }, 3000);
+      
+      return result;
+    } catch (error) {
+      console.error('Error editing message:', error);
       setStatus('Error editing message');
-      setIsSending(false);
-      return;
+      throw error;
     }
+  };
 
-  }
-
+  // Send a new message to Telegram
   const sendMessage = async (newMessage, chat_id) => {
+    console.log("Sending new message to chat ID:", chat_id);
 
-    console.error("Sending message", newMessage);
-    console.error("messageId:", chat_id);
-
-    // Try to send the message directly to the specified chat
     try {
+      // Add METADATA_STORAGE prefix if this is a message we want to edit later
+      const messageText = `METADATA_STORAGE\n${newMessage}`;
+      
       const result = await clientRef.current.send({
         '@type': 'sendMessage',
         'chat_id': chat_id,
@@ -402,12 +434,12 @@ const TelegramMessenger = () => {
           '@type': 'inputMessageText',
           'text': {
             '@type': 'formattedText',
-            'text': newMessage
+            'text': messageText
           }
         }
       });
       
-      console.error('Message sent:', result);
+      console.log('Message sent successfully');
       setStatus('Message sent successfully');
 
       // Reset status after 3 seconds
@@ -416,98 +448,95 @@ const TelegramMessenger = () => {
           setStatus('Connected to Telegram');
         }
       }, 3000);
-
-      // for some reason result.id is wrong id telegram is returning. we'll need to search for our message again.
-      // return message id back to caller.
-      // return result.id;
-
-      return
-
-      // await findMessageId();
-      // let newMesssageId = await findMessageId();
-
-      // return newMesssageId
-
-    } catch (sendError) {
-      console.error('Error sending to specific chat:', sendError);
-      setStatus('Message sent successfully');
+      
+      return result;
+    } catch (error) {
+      console.error('Error sending message:', error);
+      setStatus('Error sending message');
+      throw error;
     }
-
-    return;
   }
   
-  // Render all forms with appropriate disabled states
+  // Render authentication forms based on current auth state
   const renderAuthForms = () => {
     return (
       <div className="auth-forms-container">
-        {/* Phone Number Form - Always visible */}
-        <div className="auth-section">
-          <h3>Step 1: Phone Number</h3>
-          <form onSubmit={handlePhoneNumberSubmit} className="auth-form">
-            <input
-              type="tel"
-              value={phoneNumber}
-              onChange={handlePhoneNumberChange}
-              placeholder="Enter phone number (with country code)"
-              className="auth-input"
-              required
-              disabled={authState !== 'waitPhoneNumber'}
-            />
-            <button 
-              type="submit" 
-              className="auth-button"
-              disabled={!phoneNumber.trim()}
-            >
-              Next
-            </button>
-          </form>
-        </div>
-        
-        {/* Verification Code Form - Always visible */}
-        <div className="auth-section">
-          <h3>Step 2: Verification</h3>
-          <form onSubmit={handleVerificationCodeSubmit} className="auth-form">
-            <input
-              type="text"
-              value={verificationCode}
-              onChange={handleVerificationCodeChange}
-              placeholder="Enter verification code"
-              className="auth-input"
-              required
-              disabled={authState!== 'waitCode'}
-            />
-            <button 
-              type="submit" 
-              className="auth-button"
-              disabled={!verificationCode.trim()}
-            >
-              Verify
-            </button>
-          </form>
-        </div>
-        
-        {/* Message Form - Always visible */}
-        <div className="auth-section">
-          <h3>Step 3: Send Messages</h3>
-          <form onSubmit={handleSubmit} className="message-form">
-            <input
-              ref={inputRef}
-              type="text"
-              value={message}
-              onChange={handleMessageChange}
-              placeholder="Type your message here..."
-              className="message-input"
-              disabled={isSending}
-            />
-            <button 
-              type="submit" 
-              disabled={isSending || !message.trim()}
-              className="send-button"
-            >
-              {isSending ? 'Sending...' : 'Send'}
-            </button>
-          </form>
-        </div>
+        {/* Phone Number Form - Show when waiting for phone number */}
+        {(authState === 'initial' || authState === 'waitPhoneNumber') && (
+          <div className="auth-section">
+            <h3>Step 1: Phone Number</h3>
+            <form onSubmit={handlePhoneNumberSubmit} className="auth-form">
+              <input
+                type="tel"
+                value={phoneNumber}
+                onChange={handlePhoneNumberChange}
+                placeholder="Enter phone number (with country code)"
+                className="auth-input"
+                required
+                disabled={authState !== 'waitPhoneNumber'}
+                autoFocus={authState === 'waitPhoneNumber'}
+              />
+              <button 
+                type="submit" 
+                className="auth-button"
+                disabled={!phoneNumber.trim() || authState !== 'waitPhoneNumber'}
+              >
+                Send Code
+              </button>
+            </form>
+          </div>
+        )}
+
+        {/* Verification Code Form - Show when waiting for verification code */}
+        {(authState === 'waitCode' || authState === 'ready') && (
+          <div className="auth-section">
+            <h3>Step 2: Verification Code</h3>
+            <form onSubmit={handleVerificationCodeSubmit} className="auth-form">
+              <input
+                type="text"
+                value={verificationCode}
+                onChange={handleVerificationCodeChange}
+                placeholder="Enter verification code"
+                className="auth-input"
+                required
+                disabled={authState !== 'waitCode'}
+                autoFocus={authState === 'waitCode'}
+              />
+              <button 
+                type="submit" 
+                className="auth-button"
+                disabled={!verificationCode.trim() || authState !== 'waitCode'}
+              >
+                Verify
+              </button>
+            </form>
+          </div>
+        )}
+
+        {/* Message Form - Show when authenticated */}
+        {authState === 'ready' && (
+          <div className="message-section">
+            <h3>Send Message</h3>
+            <form onSubmit={handleSubmit} className="message-form">
+              <input
+                type="text"
+                value={message}
+                onChange={handleMessageChange}
+                placeholder="Type your message"
+                className="message-input"
+                ref={inputRef}
+                disabled={!isConnected || isSending}
+              />
+              <button 
+                type="submit" 
+                className="send-button"
+                disabled={!message.trim() || !isConnected || isSending}
+              >
+                {messageId ? 'Update' : 'Send'}
+              </button>
+            </form>
+          </div>
+        )}
       </div>
     );
   };
