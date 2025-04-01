@@ -676,69 +676,592 @@ const FileExplorer = () => {
       
       // Get the file directly from Telegram using TDLib
       try {
-        // First, get the message to find the file ID
-        const message = await telegramClient.send({
-          '@type': 'getMessage',
+        // First, try to search for the message in case the stored ID is temporary
+        console.log(`Attempting to find message with ID: ${messageId} for file: ${fileName}`);
+        
+        // Try to search for the message by content (filename)
+        const searchResult = await telegramClient.send({
+          '@type': 'searchChatMessages',
           'chat_id': CHAT_ID,
-          'message_id': messageId
-        });
-        
-        if (!message || !message.content || message.content['@type'] !== 'messageDocument') {
-          setError(`Message does not contain a downloadable file`);
-          return;
-        }
-        
-        // Get the file ID from the message
-        const fileId = message.content.document.document.id;
-        
-        if (!fileId) {
-          setError(`Could not find file ID in message`);
-          return;
-        }
-        
-        // Download the file using TDLib
-        const file = await telegramClient.send({
-          '@type': 'downloadFile',
-          'file_id': fileId,
-          'priority': 1,
+          'query': fileName,
+          'limit': 10,
+          'from_message_id': 0,
           'offset': 0,
-          'limit': 0,
-          'synchronous': true
+          'only_missed': false
         });
         
-        // Check if the file is downloaded
-        if (file.local && file.local.is_downloading_completed) {
-          // Create a blob URL from the file path
-          const filePath = file.local.path;
-          
-          if (filePath) {
-            // Use the file path to create a download link
-            const link = document.createElement('a');
-            link.href = `tdweb://download/${filePath}`;
-            link.download = fileName;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            
-            setSuccess(`Downloaded ${fileName} successfully`);
-            return;
+        console.log('Search results:', searchResult);
+        
+        let message = null;
+        let fileId = null;
+        
+        // First try to find the message using the stored message ID
+        try {
+          message = await telegramClient.send({
+            '@type': 'getMessage',
+            'chat_id': CHAT_ID,
+            'message_id': messageId
+          });
+          console.log('Message retrieved by ID:', message);
+        } catch (getMessageError) {
+          console.log('Error retrieving message by ID:', getMessageError);
+          message = null;
+        }
+        
+        // If getMessage failed, try to find the message in search results
+        if (!message && searchResult && searchResult.messages && searchResult.messages.length > 0) {
+          // Look for a message that contains our file
+          for (const msg of searchResult.messages) {
+            if (msg.content && 
+                ((msg.content['@type'] === 'messageDocument' && 
+                  msg.content.document && 
+                  msg.content.document.file_name === fileName) ||
+                 (msg.content['@type'] === 'messageDocument' && 
+                  msg.content.document && 
+                  msg.content.document.document && 
+                  msg.content.document.file_name === fileName))) {
+              message = msg;
+              console.log('Found message through search:', message);
+              
+              // Update the message ID in the file structure for future use
+              const updatedStructure = addFile(fileStructure, currentPath, fileName, message.id);
+              await window.updateTelegramFileStructure(updatedStructure);
+              break;
+            }
           }
         }
         
-        // If we can't download directly, try using the Telegram Web API
-        // This is a fallback method that works in most browsers
-        const downloadUrl = `https://api.telegram.org/file/bot${telegramClient.apiToken}/getFile?file_id=${fileId}`;
+        // Check if message exists and has content
+        if (!message || !message.content) {
+          setError(`Message not found or has no content. The file may have been deleted from Telegram.`);
+          return;
+        }
         
-        // Create and click a download link
-        const link = document.createElement('a');
-        link.href = downloadUrl;
-        link.download = fileName;
-        link.target = '_blank'; // Open in new tab if direct download doesn't work
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+        // Handle different message content types
+        if (message.content['@type'] === 'messageDocument') {
+          // Make sure document object exists and has the document property
+          if (message.content.document && message.content.document.document) {
+            fileId = message.content.document.document.id;
+          } else if (message.content.document) {
+            // Some versions of the API might have a different structure
+            fileId = message.content.document.id;
+          }
+        } else if (message.content['@type'] === 'messagePhoto') {
+          // Get the largest photo size
+          // Check if photo object and sizes array exist
+          if (message.content.photo && Array.isArray(message.content.photo.sizes) && message.content.photo.sizes.length > 0) {
+            const photoSizes = message.content.photo.sizes;
+            const largestPhoto = photoSizes.reduce((largest, current) => {
+              return (current.width * current.height > largest.width * largest.height) ? current : largest;
+            }, photoSizes[0]);
+            
+            if (largestPhoto && largestPhoto.photo) {
+              fileId = largestPhoto.photo.id;
+            }
+          }
+        } else if (message.content['@type'] === 'messageVideo') {
+          if (message.content.video && message.content.video.video) {
+            fileId = message.content.video.video.id;
+          }
+        } else if (message.content['@type'] === 'messageAudio') {
+          if (message.content.audio && message.content.audio.audio) {
+            fileId = message.content.audio.audio.id;
+          }
+        } else if (message.content['@type'] === 'messageAnimation') {
+          if (message.content.animation && message.content.animation.animation) {
+            fileId = message.content.animation.animation.id;
+          }
+        } else if (message.content['@type'] === 'messageVoiceNote') {
+          if (message.content.voice_note && message.content.voice_note.voice) {
+            fileId = message.content.voice_note.voice.id;
+          }
+        } else {
+          setError(`Message does not contain a downloadable file (type: ${message.content['@type']})`);
+          return;
+        }
         
-        setSuccess(`Download initiated for ${fileName}`);
+        if (!fileId) {
+          console.error('Could not extract file ID from message:', message);
+          setError(`Could not find file ID in message. The file format may not be supported or the message structure is unexpected.`);
+          return;
+        }
+        
+        console.log('File ID extracted:', fileId);
+        
+        // Get file info first to check size and availability
+        let fileInfo;
+        try {
+          fileInfo = await telegramClient.send({
+            '@type': 'getFile',
+            'file_id': fileId
+          });
+          
+          console.log('File info:', fileInfo);
+          
+          if (!fileInfo) {
+            setError(`Error retrieving file info: No response received`);
+            return;
+          }
+          
+          if (fileInfo['@type'] === 'error') {
+            console.error('Error in getFile response:', fileInfo);
+            setError(`Error retrieving file info: ${fileInfo.message || 'Unknown error'} (Code: ${fileInfo.code || 'unknown'})`);
+            return;
+          }
+        } catch (fileInfoError) {
+          console.error('Exception during getFile:', fileInfoError);
+          setError(`Error retrieving file info: ${fileInfoError.message || 'Unknown error'}`);
+          return;
+        }
+        
+        // Download the file using TDLib with streaming approach
+        let downloadResult;
+        try {
+          downloadResult = await telegramClient.send({
+            '@type': 'downloadFile',
+            'file_id': fileId,
+            'priority': 1,
+            'offset': 0,
+            'limit': 0,
+            'synchronous': false // Use asynchronous download to avoid blocking UI
+          });
+          
+          console.log('Download initiated:', downloadResult);
+          
+          if (downloadResult['@type'] === 'error') {
+            console.error('Error in downloadFile response:', downloadResult);
+            setError(`Error starting download: ${downloadResult.message} (Code: ${downloadResult.code || 'unknown'})`);
+            return;
+          }
+        } catch (downloadError) {
+          console.error('Exception during downloadFile:', downloadError);
+          setError(`Error starting download: ${downloadError.message || 'Unknown error'}`);
+          return;
+        }
+        
+        // Set up a progress checker
+        let downloadComplete = false;
+        let downloadProgress = 0;
+        let checkAttempts = 0;
+        let consecutiveErrors = 0;
+        const maxCheckAttempts = 60; // Check for up to 1 minute (60 * 1s)
+        const maxConsecutiveErrors = 5; // Allow up to 5 consecutive errors before giving up
+        
+        const checkDownloadProgress = async () => {
+          if (downloadComplete || checkAttempts >= maxCheckAttempts) {
+            if (checkAttempts >= maxCheckAttempts && !downloadComplete) {
+              setError(`Download timed out after ${maxCheckAttempts} seconds. Please try again.`);
+            }
+            return;
+          }
+          
+          checkAttempts++;
+          
+          try {
+            // Check current file status
+            const currentFileInfo = await telegramClient.send({
+              '@type': 'getFile',
+              'file_id': fileId
+            });
+            
+            if (currentFileInfo['@type'] === 'error') {
+              console.error('Error checking file status:', currentFileInfo);
+              consecutiveErrors++;
+              
+              if (consecutiveErrors >= maxConsecutiveErrors) {
+                setError(`Error checking download status: ${currentFileInfo.message} (Code: ${currentFileInfo.code || 'unknown'}). Too many consecutive errors.`);
+                return;
+              }
+              
+              // Continue checking despite errors
+              setTimeout(checkDownloadProgress, 1000);
+              return;
+            }
+            
+            // Reset consecutive errors counter on success
+            consecutiveErrors = 0;
+            
+            if (currentFileInfo.local && currentFileInfo.local.is_downloading_completed) {
+              downloadComplete = true;
+              handleFileDownloadComplete(currentFileInfo, fileName);
+              return;
+            }
+            
+            // Update progress if available
+            if (currentFileInfo.local && currentFileInfo.local.downloaded_size > 0) {
+              const newProgress = Math.round((currentFileInfo.local.downloaded_size / currentFileInfo.size) * 100);
+              if (newProgress !== downloadProgress) {
+                downloadProgress = newProgress;
+                setSuccess(`Downloading ${fileName}... ${downloadProgress}%`);
+              }
+            } else {
+              // If no progress yet, show a waiting message
+              setSuccess(`Preparing download for ${fileName}... Please wait.`);
+            }
+            
+            // Continue checking
+            setTimeout(checkDownloadProgress, 1000);
+          } catch (error) {
+            console.error('Error checking download progress:', error);
+            consecutiveErrors++;
+            
+            if (consecutiveErrors >= maxConsecutiveErrors) {
+              setError(`Error checking download progress: ${error.message || 'Unknown error'}. Too many consecutive errors.`);
+              return;
+            }
+            
+            // Continue checking despite errors
+            setTimeout(checkDownloadProgress, 1000);
+          }
+        };
+        
+        // Start progress checking
+        checkDownloadProgress();
+        
+        // Function to handle completed download
+        const handleFileDownloadComplete = (completedFile, fileName) => {
+          try {
+            console.log('Handling completed download for file:', fileName, completedFile);
+            
+            if (completedFile.local && completedFile.local.is_downloading_completed) {
+              if (completedFile.local.path) {
+                // Create a blob URL from the file data
+                const filePath = completedFile.local.path;
+                console.log('Download completed, file path:', filePath);
+                
+                // Check if we can access the file directly
+                if (window.tdweb && typeof window.tdweb.getFileBlob === 'function') {
+                  // Use TDWeb's getFileBlob function if available
+                  window.tdweb.getFileBlob(filePath)
+                    .then(blob => {
+                      const url = URL.createObjectURL(blob);
+                      const link = document.createElement('a');
+                      link.href = url;
+                      link.download = fileName;
+                      document.body.appendChild(link);
+                      link.click();
+                      document.body.removeChild(link);
+                      setTimeout(() => URL.revokeObjectURL(url), 1000);
+                      setSuccess(`Downloaded ${fileName} successfully`);
+                    })
+                    .catch(error => {
+                      console.error('Error getting file blob:', error);
+                      // Fall back to blob approach
+                      handleBlobDownload(completedFile, fileName);
+                    });
+                  return;
+                }
+                
+                // If TDWeb's getFileBlob is not available, try direct path approach
+                try {
+                  // Use the TDLib download protocol with proper URL encoding
+                  const encodedPath = encodeURIComponent(filePath);
+                  const link = document.createElement('a');
+                  link.href = `tdweb://download/${encodedPath}`;
+                  link.download = fileName;
+                  document.body.appendChild(link);
+                  link.click();
+                  document.body.removeChild(link);
+                  
+                  setSuccess(`Downloaded ${fileName} successfully`);
+                  return;
+                } catch (pathError) {
+                  console.error('Error with direct path download:', pathError);
+                  // Continue to blob approach
+                }
+              }
+            }
+            
+            // If we get here, either the path is not available or download is not complete
+            // Try the blob approach as fallback
+            console.log('Path not available or download not complete, trying blob approach');
+            handleBlobDownload(completedFile, fileName);
+          } catch (error) {
+            console.error('Error handling completed download:', error);
+            setError(`Error processing downloaded file: ${error.message}`);
+          }
+        };
+        
+        // Fallback method using Blob
+        const handleBlobDownload = async (fileInfo, fileName) => {
+          try {
+            console.log('Starting blob download for file:', fileName, fileInfo);
+            
+            // Make sure we have a valid file ID
+            if (!fileInfo || !fileInfo.id) {
+              throw new Error('Invalid file information: missing file ID');
+            }
+            
+            // Make sure we have a valid file size
+            if (!fileInfo.size || fileInfo.size <= 0) {
+              throw new Error('Invalid file size: ' + (fileInfo.size || 'unknown'));
+            }
+            
+            // Try to download using TDLib's downloadFile first if the file isn't already downloaded
+            if (!fileInfo.local || !fileInfo.local.is_downloading_completed) {
+              setSuccess(`Downloading ${fileName}... Please wait.`);
+              try {
+                // Force a synchronous download
+                const downloadResult = await telegramClient.send({
+                  '@type': 'downloadFile',
+                  'file_id': fileInfo.id,
+                  'priority': 32, // Higher priority
+                  'offset': 0,
+                  'limit': 0,
+                  'synchronous': true // Use synchronous download to ensure completion
+                });
+                
+                console.log('Forced download result:', downloadResult);
+                
+                // Update fileInfo with the latest data
+                if (downloadResult && downloadResult.id) {
+                  fileInfo = downloadResult;
+                }
+              } catch (downloadError) {
+                console.error('Error during forced download:', downloadError);
+                // Continue with readFilePart approach even if download fails
+              }
+            }
+            
+            // Try to use local path if available after download
+            if (fileInfo.local && 
+                fileInfo.local.is_downloading_completed && 
+                fileInfo.local.path && 
+                window.tdweb && 
+                typeof window.tdweb.getFileBlob === 'function') {
+              try {
+                const blob = await window.tdweb.getFileBlob(fileInfo.local.path);
+                if (blob && blob.size > 0) {
+                  // Create download link
+                  const url = URL.createObjectURL(blob);
+                  const link = document.createElement('a');
+                  link.href = url;
+                  link.download = fileName;
+                  document.body.appendChild(link);
+                  link.click();
+                  document.body.removeChild(link);
+                  setTimeout(() => URL.revokeObjectURL(url), 1000);
+                  setSuccess(`Downloaded ${fileName} successfully`);
+                  return;
+                }
+              } catch (pathError) {
+                console.error('Error using local path:', pathError);
+                // Continue with readFilePart approach
+              }
+            }
+            
+            // Try alternative approach first - get file content directly
+            try {
+              setSuccess(`Downloading ${fileName} using direct method...`);
+              
+              // Try to get the file directly from TDLib
+              const directFileResult = await telegramClient.send({
+                '@type': 'getRemoteFile',
+                'remote_file_id': fileInfo.remote?.id,
+                'file_type': {
+                  '@type': 'fileTypeDocument'
+                }
+              });
+              
+              console.log('Direct file result:', directFileResult);
+              
+              if (directFileResult && directFileResult.id && directFileResult.id !== fileInfo.id) {
+                // Update fileInfo with the new file data
+                fileInfo = await telegramClient.send({
+                  '@type': 'getFile',
+                  'file_id': directFileResult.id
+                });
+                console.log('Updated file info:', fileInfo);
+              }
+            } catch (directError) {
+              console.error('Error getting file directly:', directError);
+              // Continue with readFilePart approach
+            }
+            
+            // Read the file as a blob with retry mechanism
+            let fileBlob = null;
+            let retryCount = 0;
+            const maxRetries = 5; // Increased retries
+            
+            while (retryCount < maxRetries) {
+              try {
+                setSuccess(`Downloading ${fileName}... Attempt ${retryCount + 1}/${maxRetries}`);
+                
+                fileBlob = await telegramClient.send({
+                  '@type': 'readFilePart',
+                  'file_id': fileInfo.id,
+                  'offset': 0,
+                  'count': fileInfo.size
+                });
+                
+                if (fileBlob && fileBlob['@type'] !== 'error' && fileBlob.data) {
+                  break; // Success, exit retry loop
+                }
+                
+                console.log(`Retry ${retryCount + 1}/${maxRetries} for readFilePart failed:`, fileBlob);
+                retryCount++;
+                
+                // Wait before retrying with increasing delay
+                await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)));
+              } catch (retryError) {
+                console.error(`Retry ${retryCount + 1}/${maxRetries} error:`, retryError);
+                retryCount++;
+                
+                // Wait before retrying with increasing delay
+                await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)));
+              }
+            }
+            
+            if (!fileBlob || fileBlob['@type'] === 'error') {
+              throw new Error(`Failed to read file data after ${maxRetries} attempts: ${fileBlob?.message || 'Unknown error'} (Code: ${fileBlob?.code || 'unknown'})`);
+            }
+            
+            if (!fileBlob.data) {
+              throw new Error('No file data received from readFilePart');
+            }
+            
+            // Convert data to blob with better error handling
+            let blob;
+            try {
+              console.log('Processing file data of type:', typeof fileBlob.data);
+              
+              if (typeof fileBlob.data === 'string') {
+                console.log('Converting base64 string to blob');
+                // Check if it's a base64 string
+                let byteCharacters;
+                try {
+                  // Try to decode as base64
+                  byteCharacters = atob(fileBlob.data);
+                } catch (base64Error) {
+                  console.error('Error decoding base64:', base64Error);
+                  // If not base64, try to parse as JSON to see if it contains file data
+                  try {
+                    const jsonData = JSON.parse(fileBlob.data);
+                    if (jsonData && jsonData.data) {
+                      // If JSON contains data field, try to use that as base64
+                      try {
+                        byteCharacters = atob(jsonData.data);
+                      } catch (nestedBase64Error) {
+                        console.error('Error decoding nested base64:', nestedBase64Error);
+                        // If not base64, use as-is
+                        byteCharacters = jsonData.data;
+                      }
+                    } else {
+                      // Otherwise use as-is
+                      byteCharacters = fileBlob.data;
+                    }
+                  } catch (jsonError) {
+                    // If not JSON either, use as-is
+                    console.error('Error parsing JSON:', jsonError);
+                    byteCharacters = fileBlob.data;
+                  }
+                }
+                
+                const byteArrays = [];
+                
+                for (let offset = 0; offset < byteCharacters.length; offset += 1024) {
+                  const slice = byteCharacters.slice(offset, offset + 1024);
+                  const byteNumbers = new Array(slice.length);
+                  
+                  for (let i = 0; i < slice.length; i++) {
+                    byteNumbers[i] = slice.charCodeAt(i);
+                  }
+                  
+                  byteArrays.push(new Uint8Array(byteNumbers));
+                }
+                
+                blob = new Blob(byteArrays);
+              } else if (fileBlob.data instanceof Uint8Array) {
+                console.log('Converting Uint8Array to blob');
+                // Already a binary array
+                blob = new Blob([fileBlob.data]);
+              } else if (fileBlob.data instanceof ArrayBuffer) {
+                console.log('Converting ArrayBuffer to blob');
+                // Handle ArrayBuffer
+                blob = new Blob([new Uint8Array(fileBlob.data)]);
+              } else if (fileBlob.data instanceof Blob) {
+                console.log('Data is already a Blob');
+                // Already a blob
+                blob = fileBlob.data;
+              } else {
+                console.error('Unsupported data type:', typeof fileBlob.data, fileBlob.data);
+                throw new Error(`Unsupported file data format: ${typeof fileBlob.data}`);
+              }
+              
+              if (!blob || blob.size === 0) {
+                throw new Error('Created blob is empty');
+              }
+              
+              console.log(`Created blob of size: ${blob.size} bytes`);
+            } catch (blobError) {
+              console.error('Error creating blob:', blobError);
+              throw new Error(`Failed to create blob: ${blobError.message}`);
+            }
+            
+            // Create download link with proper MIME type detection
+            let mimeType = 'application/octet-stream'; // Default MIME type
+            
+            // Try to determine MIME type from file extension
+            const extension = fileName.split('.').pop().toLowerCase();
+            if (extension) {
+              // Common MIME types mapping
+              const mimeTypes = {
+                'pdf': 'application/pdf',
+                'jpg': 'image/jpeg',
+                'jpeg': 'image/jpeg',
+                'png': 'image/png',
+                'gif': 'image/gif',
+                'svg': 'image/svg+xml',
+                'txt': 'text/plain',
+                'html': 'text/html',
+                'css': 'text/css',
+                'js': 'text/javascript',
+                'json': 'application/json',
+                'xml': 'application/xml',
+                'zip': 'application/zip',
+                'doc': 'application/msword',
+                'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                'xls': 'application/vnd.ms-excel',
+                'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'ppt': 'application/vnd.ms-powerpoint',
+                'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                'mp3': 'audio/mpeg',
+                'mp4': 'video/mp4',
+                'wav': 'audio/wav',
+                'avi': 'video/x-msvideo',
+                'mov': 'video/quicktime'
+              };
+              
+              if (mimeTypes[extension]) {
+                mimeType = mimeTypes[extension];
+              }
+            }
+            
+            console.log(`Using MIME type: ${mimeType} for file: ${fileName}`);
+            const url = URL.createObjectURL(new Blob([blob], { type: mimeType }));
+            
+            // Create and trigger download link
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = fileName;
+            link.style.display = 'none';
+            document.body.appendChild(link);
+            
+            // Use a small timeout to ensure the browser has time to create the object URL
+            setTimeout(() => {
+              link.click();
+              document.body.removeChild(link);
+              
+              // Clean up the object URL after download starts
+              setTimeout(() => URL.revokeObjectURL(url), 1000);
+              
+              setSuccess(`Downloaded ${fileName} successfully`);
+            }, 100);
+          } catch (error) {
+            console.error('Error in blob download:', error);
+            setError(`Failed to download file: ${error.message}`);
+          }
+        };
       } catch (downloadError) {
         console.error('Error downloading file:', downloadError);
         setError(`Error downloading file: ${downloadError.message}`);

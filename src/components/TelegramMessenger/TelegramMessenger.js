@@ -495,7 +495,7 @@ const TelegramMessenger = () => {
 
     try {
       // Add METADATA_STORAGE prefix if this is a message we want to edit later
-      const messageText = `METADATA_STORAGE\n${newMessage}`;
+      const messageText = newMessage;
       
       const result = await clientRef.current.send({
         '@type': 'sendMessage',
