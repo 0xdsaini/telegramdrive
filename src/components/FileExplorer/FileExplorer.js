@@ -952,21 +952,64 @@ const FileExplorer = () => {
                   return;
                 }
                 
-                // If TDWeb's getFileBlob is not available, try direct path approach
+                // If TDWeb's getFileBlob is not available, try to read the file directly
                 try {
-                  // Use the TDLib download protocol with proper URL encoding
-                  const encodedPath = encodeURIComponent(filePath);
-                  const link = document.createElement('a');
-                  link.href = `tdweb://download/${encodedPath}`;
-                  link.download = fileName;
-                  document.body.appendChild(link);
-                  link.click();
-                  document.body.removeChild(link);
+                  // Use readFilePart to get the file data directly
+                  const fileData = telegramClient.send({
+                    '@type': 'readFilePart',
+                    'file_id': completedFile.id,
+                    'offset': 0,
+                    'count': completedFile.size
+                  });
                   
-                  setSuccess(`Downloaded ${fileName} successfully`);
-                  return;
+                  if (fileData && fileData.data) {
+                    // Create a blob from the file data
+                    let blob;
+                    if (typeof fileData.data === 'string') {
+                      // Handle base64 string
+                      try {
+                        const byteCharacters = atob(fileData.data);
+                        const byteArrays = [];
+                        
+                        for (let offset = 0; offset < byteCharacters.length; offset += 1024) {
+                          const slice = byteCharacters.slice(offset, offset + 1024);
+                          const byteNumbers = new Array(slice.length);
+                          
+                          for (let i = 0; i < slice.length; i++) {
+                            byteNumbers[i] = slice.charCodeAt(i);
+                          }
+                          
+                          byteArrays.push(new Uint8Array(byteNumbers));
+                        }
+                        
+                        blob = new Blob(byteArrays);
+                      } catch (error) {
+                        console.error('Error processing base64 data:', error);
+                        throw error;
+                      }
+                    } else if (fileData.data instanceof Uint8Array || fileData.data instanceof ArrayBuffer) {
+                      // Handle binary data
+                      blob = new Blob([fileData.data]);
+                    } else {
+                      console.error('Unsupported data type:', typeof fileData.data);
+                      throw new Error(`Unsupported file data format: ${typeof fileData.data}`);
+                    }
+                    
+                    // Create download link
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = fileName;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    setTimeout(() => URL.revokeObjectURL(url), 1000);
+                    
+                    setSuccess(`Downloaded ${fileName} successfully`);
+                    return;
+                  }
                 } catch (pathError) {
-                  console.error('Error with direct path download:', pathError);
+                  console.error('Error with direct file download:', pathError);
                   // Continue to blob approach
                 }
               }
