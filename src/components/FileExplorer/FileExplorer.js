@@ -1123,38 +1123,103 @@ const FileExplorer = () => {
               // Continue with readFilePart approach
             }
             
-            // Read the file as a blob with retry mechanism
-            let fileBlob = null;
-            let retryCount = 0;
-            const maxRetries = 5; // Increased retries
-            
-            while (retryCount < maxRetries) {
+            // Helper function to implement chunked downloads
+            const downloadFileInChunks = async (fileId, fileSize) => {
+              const CHUNK_SIZE = 1024 * 1024; // 1MB chunks
+              const totalChunks = Math.ceil(fileSize / CHUNK_SIZE);
+              const chunks = [];
+              let downloadedSize = 0;
+              
               try {
-                setSuccess(`Downloading ${fileName}... Attempt ${retryCount + 1}/${maxRetries}`);
-                
-                fileBlob = await telegramClient.send({
-                  '@type': 'readFilePart',
-                  'file_id': fileInfo.id,
-                  'offset': 0,
-                  'count': fileInfo.size
-                });
-                
-                if (fileBlob && fileBlob['@type'] !== 'error' && fileBlob.data) {
-                  break; // Success, exit retry loop
+                for (let i = 0; i < totalChunks; i++) {
+                  const offset = i * CHUNK_SIZE;
+                  const chunkSize = Math.min(CHUNK_SIZE, fileSize - offset);
+                  
+                  // Update progress
+                  const progress = Math.round((downloadedSize / fileSize) * 100);
+                  setSuccess(`Downloading ${fileName}... ${progress}%`);
+                  
+                  // Download chunk with retry mechanism
+                  let chunkResult = null;
+                  let chunkRetryCount = 0;
+                  const maxChunkRetries = 3;
+                  
+                  while (chunkRetryCount < maxChunkRetries) {
+                    try {
+                      chunkResult = await telegramClient.send({
+                        '@type': 'readFilePart',
+                        'file_id': fileId,
+                        'offset': offset,
+                        'count': chunkSize
+                      });
+                      
+                      if (chunkResult && chunkResult['@type'] !== 'error' && chunkResult.data) {
+                        break; // Success, exit retry loop
+                      }
+                      
+                      console.log(`Chunk ${i+1}/${totalChunks} retry ${chunkRetryCount + 1}/${maxChunkRetries} failed:`, chunkResult);
+                      chunkRetryCount++;
+                      
+                      // Wait before retrying
+                      await new Promise(resolve => setTimeout(resolve, 500 * (chunkRetryCount + 1)));
+                    } catch (chunkError) {
+                      console.error(`Chunk ${i+1}/${totalChunks} retry ${chunkRetryCount + 1}/${maxChunkRetries} error:`, chunkError);
+                      chunkRetryCount++;
+                      
+                      // Wait before retrying
+                      await new Promise(resolve => setTimeout(resolve, 500 * (chunkRetryCount + 1)));
+                    }
+                  }
+                  
+                  if (!chunkResult || chunkResult['@type'] === 'error' || !chunkResult.data) {
+                    throw new Error(`Failed to download chunk ${i+1}/${totalChunks}: ${chunkResult?.message || 'Unknown error'}`);
+                  }
+                  
+                  // Process chunk data
+                  let chunkData;
+                  if (typeof chunkResult.data === 'string') {
+                    // Handle base64 string
+                    try {
+                      const byteCharacters = atob(chunkResult.data);
+                      const byteArray = new Uint8Array(byteCharacters.length);
+                      for (let j = 0; j < byteCharacters.length; j++) {
+                        byteArray[j] = byteCharacters.charCodeAt(j);
+                      }
+                      chunkData = byteArray;
+                    } catch (error) {
+                      console.error('Error processing chunk data:', error);
+                      throw error;
+                    }
+                  } else if (chunkResult.data instanceof Uint8Array || chunkResult.data instanceof ArrayBuffer) {
+                    // Handle binary data
+                    chunkData = chunkResult.data;
+                  } else {
+                    throw new Error(`Unsupported chunk data format: ${typeof chunkResult.data}`);
+                  }
+                  
+                  chunks.push(chunkData);
+                  downloadedSize += chunkSize;
+                  
+                  // Small delay to prevent overwhelming the browser
+                  await new Promise(resolve => setTimeout(resolve, 10));
                 }
                 
-                console.log(`Retry ${retryCount + 1}/${maxRetries} for readFilePart failed:`, fileBlob);
-                retryCount++;
-                
-                // Wait before retrying with increasing delay
-                await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)));
-              } catch (retryError) {
-                console.error(`Retry ${retryCount + 1}/${maxRetries} error:`, retryError);
-                retryCount++;
-                
-                // Wait before retrying with increasing delay
-                await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)));
+                // Combine all chunks into a single blob
+                return new Blob(chunks);
+              } catch (error) {
+                console.error('Error in chunked download:', error);
+                throw error;
               }
+            };
+            
+            // Use chunked download approach
+            setSuccess(`Downloading ${fileName} using chunked method...`);
+            let blob;
+            try {
+              blob = await downloadFileInChunks(fileInfo.id, fileInfo.size);
+            } catch (chunkError) {
+              console.error('Chunked download failed:', chunkError);
+              throw chunkError;
             }
             
             if (!fileBlob || fileBlob['@type'] === 'error') {
