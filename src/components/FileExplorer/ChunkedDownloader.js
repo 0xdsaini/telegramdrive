@@ -4,7 +4,7 @@
  */
 
 /**
- * Downloads a file from Telegram in chunks
+ * Downloads a file from Telegram in chunks with parallel downloading
  * @param {Object} telegramClient - The Telegram client instance
  * @param {string} fileId - The ID of the file to download
  * @param {number} fileSize - The total size of the file in bytes
@@ -19,99 +19,236 @@ export const downloadFileInChunks = async (
   fileName,
   progressCallback
 ) => {
-  // Use smaller chunks for better progress reporting and to avoid memory issues
-  const CHUNK_SIZE = 512 * 1024; // 512KB chunks
+  // Adjust chunk size based on file size for better performance
+  // Smaller chunks for smaller files, larger chunks for larger files
+  const getOptimalChunkSize = (size) => {
+    if (size < 1024 * 1024) return 256 * 1024; // 256KB for files < 1MB
+    if (size < 10 * 1024 * 1024) return 512 * 1024; // 512KB for files < 10MB
+    return 1024 * 1024; // 1MB for larger files
+  };
+
+  const CHUNK_SIZE = getOptimalChunkSize(fileSize);
+  const MAX_PARALLEL_DOWNLOADS = 3; // Maximum number of parallel download connections
+  
+  // Adjust parallel downloads based on file size and chunk size
+  const PARALLEL_DOWNLOADS = Math.min(
+    MAX_PARALLEL_DOWNLOADS, 
+    Math.ceil(fileSize / CHUNK_SIZE), // Don't use more connections than chunks
+    10 // Hard upper limit
+  );
+  
   const totalChunks = Math.ceil(fileSize / CHUNK_SIZE);
-  const chunks = [];
+  
+  // Create an array to store all chunks, pre-allocate with null values
+  const chunks = new Array(totalChunks).fill(null);
+  
+  // Track download progress
   let downloadedSize = 0;
+  let completedChunks = 0;
+  let failedChunks = [];
+  let lastProgressUpdate = 0;
   
   try {
-    console.log(`Starting chunked download for ${fileName} (${fileSize} bytes) in ${totalChunks} chunks`);
+    console.log(`Starting optimized chunked download for ${fileName} (${fileSize} bytes) in ${totalChunks} chunks with ${PARALLEL_DOWNLOADS} parallel connections`);
+    console.log(`Using chunk size: ${CHUNK_SIZE / 1024}KB`);
     
-    for (let i = 0; i < totalChunks; i++) {
-      const offset = i * CHUNK_SIZE;
+    // Create a function to process a single chunk download
+    const downloadChunk = async (chunkIndex) => {
+      const offset = chunkIndex * CHUNK_SIZE;
       const chunkSize = Math.min(CHUNK_SIZE, fileSize - offset);
       
-      // Update progress
-      const progress = Math.round((downloadedSize / fileSize) * 100);
-      progressCallback(`Downloading ${fileName}... ${progress}%`);
-      
-      // Download chunk with retry mechanism
+      // Download chunk with improved retry mechanism
       let chunkResult = null;
       let chunkRetryCount = 0;
-      const maxChunkRetries = 3;
+      const maxChunkRetries = 5; // Increased max retries
       
       while (chunkRetryCount < maxChunkRetries) {
         try {
-          chunkResult = await telegramClient.send({
+          // Add timeout to prevent hanging requests
+          const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => reject(new Error('Request timeout')), 30000); // 30 second timeout
+          });
+          
+          const requestPromise = telegramClient.send({
             '@type': 'readFilePart',
             'file_id': fileId,
             'offset': offset,
             'count': chunkSize
           });
           
+          // Race between the request and the timeout
+          chunkResult = await Promise.race([requestPromise, timeoutPromise]);
+          
           if (chunkResult && chunkResult['@type'] !== 'error' && chunkResult.data) {
             break; // Success, exit retry loop
           }
           
-          console.log(`Chunk ${i+1}/${totalChunks} retry ${chunkRetryCount + 1}/${maxChunkRetries} failed:`, chunkResult);
+          console.log(`Chunk ${chunkIndex+1}/${totalChunks} retry ${chunkRetryCount + 1}/${maxChunkRetries} failed:`, 
+            chunkResult?.message || 'No data received');
           chunkRetryCount++;
           
-          // Wait before retrying with increasing delay
-          await new Promise(resolve => setTimeout(resolve, 500 * (chunkRetryCount + 1)));
+          // Wait before retrying with increasing delay and some randomness to avoid thundering herd
+          const delay = 500 * (chunkRetryCount + 1) + Math.random() * 500;
+          await new Promise(resolve => setTimeout(resolve, delay));
         } catch (chunkError) {
-          console.error(`Chunk ${i+1}/${totalChunks} retry ${chunkRetryCount + 1}/${maxChunkRetries} error:`, chunkError);
+          console.error(`Chunk ${chunkIndex+1}/${totalChunks} retry ${chunkRetryCount + 1}/${maxChunkRetries} error:`, 
+            chunkError.message || chunkError);
           chunkRetryCount++;
           
-          // Wait before retrying with increasing delay
-          await new Promise(resolve => setTimeout(resolve, 500 * (chunkRetryCount + 1)));
+          // Wait before retrying with increasing delay and some randomness
+          const delay = 1000 * (chunkRetryCount + 1) + Math.random() * 1000;
+          await new Promise(resolve => setTimeout(resolve, delay));
         }
       }
       
+      // Handle failed chunk after all retries
       if (!chunkResult || chunkResult['@type'] === 'error' || !chunkResult.data) {
-        throw new Error(`Failed to download chunk ${i+1}/${totalChunks}: ${chunkResult?.message || 'Unknown error'}`);
+        failedChunks.push(chunkIndex);
+        console.error(`Failed to download chunk ${chunkIndex+1}/${totalChunks} after ${maxChunkRetries} retries`);
+        return { chunkIndex, success: false };
       }
       
-      // Process chunk data
+      // Process chunk data with improved error handling
       let chunkData;
-      if (typeof chunkResult.data === 'string') {
-        // Handle base64 string
-        try {
-          const byteCharacters = atob(chunkResult.data);
-          const byteArray = new Uint8Array(byteCharacters.length);
-          for (let j = 0; j < byteCharacters.length; j++) {
-            byteArray[j] = byteCharacters.charCodeAt(j);
+      try {
+        if (typeof chunkResult.data === 'string') {
+          // Handle base64 string
+          try {
+            const byteCharacters = atob(chunkResult.data);
+            const byteArray = new Uint8Array(byteCharacters.length);
+            for (let j = 0; j < byteCharacters.length; j++) {
+              byteArray[j] = byteCharacters.charCodeAt(j);
+            }
+            chunkData = byteArray;
+          } catch (error) {
+            console.error(`Error decoding base64 data for chunk ${chunkIndex+1}:`, error);
+            throw error;
           }
-          chunkData = byteArray;
-        } catch (error) {
-          console.error('Error processing chunk data:', error);
-          throw error;
+        } else if (chunkResult.data instanceof Uint8Array) {
+          chunkData = chunkResult.data;
+        } else if (chunkResult.data instanceof ArrayBuffer) {
+          chunkData = new Uint8Array(chunkResult.data);
+        } else {
+          throw new Error(`Unsupported chunk data format: ${typeof chunkResult.data}`);
         }
-      } else if (chunkResult.data instanceof Uint8Array || chunkResult.data instanceof ArrayBuffer) {
-        // Handle binary data
-        chunkData = chunkResult.data;
-      } else {
-        throw new Error(`Unsupported chunk data format: ${typeof chunkResult.data}`);
+        
+        // Store the chunk in its correct position
+        chunks[chunkIndex] = chunkData;
+        
+        // Update progress atomically
+        completedChunks++;
+        downloadedSize += chunkSize;
+        
+        // Throttle progress updates to avoid excessive UI updates
+        const now = Date.now();
+        if (now - lastProgressUpdate > 200 || completedChunks === totalChunks) {
+          const progress = Math.round((downloadedSize / fileSize) * 100);
+          progressCallback(`Downloading ${fileName}... ${progress}%`);
+          lastProgressUpdate = now;
+        }
+        
+        console.log(`Chunk ${chunkIndex+1}/${totalChunks} downloaded. Progress: ${Math.round((completedChunks / totalChunks) * 100)}%. Completed chunks: ${completedChunks}/${totalChunks}`);
+        
+        return { chunkIndex, success: true };
+      } catch (processingError) {
+        console.error(`Error processing chunk ${chunkIndex+1}:`, processingError);
+        failedChunks.push(chunkIndex);
+        return { chunkIndex, success: false };
       }
+    };
+    
+    // Function to create download tasks with improved error handling
+    const createDownloadTasks = async () => {
+      // Create a queue of chunk indices to download
+      let chunkQueue = Array.from({ length: totalChunks }, (_, i) => i);
       
-      chunks.push(chunkData);
-      downloadedSize += chunkSize;
-      
-      // Small delay to prevent overwhelming the browser
-      await new Promise(resolve => setTimeout(resolve, 10));
+      // Process the queue with parallel workers
+      while (chunkQueue.length > 0 || failedChunks.length > 0) {
+        // First retry any failed chunks
+        if (failedChunks.length > 0) {
+          console.log(`Retrying ${failedChunks.length} failed chunks...`);
+          chunkQueue = [...failedChunks];
+          failedChunks = [];
+        }
+        
+        if (chunkQueue.length === 0) break;
+        
+        const currentBatch = [];
+        
+        // Take up to PARALLEL_DOWNLOADS chunks from the queue
+        for (let i = 0; i < Math.min(PARALLEL_DOWNLOADS, chunkQueue.length); i++) {
+          const chunkIndex = chunkQueue.shift();
+          currentBatch.push(downloadChunk(chunkIndex));
+        }
+        
+        // Wait for the current batch to complete before starting the next batch
+        if (currentBatch.length > 0) {
+          const results = await Promise.all(currentBatch);
+          
+          // Check for any failed chunks in this batch
+          const newFailedChunks = results
+            .filter(result => !result.success)
+            .map(result => result.chunkIndex);
+          
+          if (newFailedChunks.length > 0) {
+            failedChunks.push(...newFailedChunks);
+          }
+        }
+      }
+    };
+    
+    // Start the download process
+    await createDownloadTasks();
+    
+    // Check if we still have failed chunks after all retries
+    if (failedChunks.length > 0) {
+      throw new Error(`Failed to download ${failedChunks.length} chunks after multiple retries`);
+    }
+    
+    // Verify all chunks were downloaded
+    const missingChunks = chunks.findIndex(chunk => chunk === null);
+    if (missingChunks !== -1) {
+      throw new Error(`Missing chunks detected at index ${missingChunks}`);
     }
     
     // Final progress update
     progressCallback(`Downloading ${fileName}... 100%`);
-    console.log(`Chunked download complete for ${fileName}. Total size: ${downloadedSize} bytes`);
+    console.log(`Parallel chunked download complete for ${fileName}. Total size: ${downloadedSize} bytes`);
     
-    // Combine all chunks into a single blob
-    return new Blob(chunks);
+    // Combine all chunks into a single blob with proper memory management
+    try {
+      // Create blob in smaller batches to avoid memory issues with very large files
+      if (totalChunks > 100) {
+        console.log(`Large file detected (${totalChunks} chunks), creating blob in batches`);
+        const BATCH_SIZE = 50; // Process 50 chunks at a time
+        const blobParts = [];
+        
+        for (let i = 0; i < totalChunks; i += BATCH_SIZE) {
+          const end = Math.min(i + BATCH_SIZE, totalChunks);
+          const batchChunks = chunks.slice(i, end);
+          blobParts.push(new Blob(batchChunks));
+          
+          // Clear references to processed chunks to help garbage collection
+          for (let j = i; j < end; j++) {
+            chunks[j] = null;
+          }
+        }
+        
+        return new Blob(blobParts);
+      } else {
+        // For smaller files, create blob directly
+        return new Blob(chunks);
+      }
+    } catch (blobError) {
+      console.error('Error creating blob from chunks:', blobError);
+      throw new Error(`Failed to create file from downloaded chunks: ${blobError.message}`);
+    }
   } catch (error) {
-    console.error('Error in chunked download:', error);
+    console.error('Error in parallel chunked download:', error);
+    progressCallback(`Download failed: ${error.message}`);
     throw error;
   }
-};
+}
 
 /**
  * Determines the appropriate MIME type based on file extension
