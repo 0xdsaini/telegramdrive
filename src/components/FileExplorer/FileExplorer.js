@@ -487,9 +487,9 @@ const FileExplorer = () => {
             continue;
           }
           
-          // Check file size - TDLib has limitations
-          if (fileData.length > 50 * 1024 * 1024) { // 50MB limit
-            setError(`File ${file.name} is too large (${(fileData.length / (1024 * 1024)).toFixed(2)}MB). Maximum size is 50MB.`);
+          // Check file size - Personal accounts can handle up to 2GB
+          if (fileData.length > 2 * 1024 * 1024 * 1024) { // 2GB limit
+            setError(`File ${file.name} is too large (${(fileData.length / (1024 * 1024)).toFixed(2)}MB). Maximum size is 2GB.`);
             continue;
           }
           
@@ -849,7 +849,9 @@ const FileExplorer = () => {
         
         const checkDownloadProgress = async () => {
           if (downloadComplete || checkAttempts >= maxCheckAttempts) {
-            if (checkAttempts >= maxCheckAttempts && !downloadComplete) {
+            // this (false || <whatever>) renders the whole timeout mechanism ineffective
+            // NOTICE: activate later if you need it. 
+            if (false && checkAttempts >= maxCheckAttempts && !downloadComplete) {
               setError(`Download timed out after ${maxCheckAttempts} seconds. Please try again.`);
             }
             return;
