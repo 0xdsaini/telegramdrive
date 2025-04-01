@@ -1223,7 +1223,7 @@ const FileExplorer = () => {
             }
             
             if (!fileBlob || fileBlob['@type'] === 'error') {
-              throw new Error(`Failed to read file data after ${maxRetries} attempts: ${fileBlob?.message || 'Unknown error'} (Code: ${fileBlob?.code || 'unknown'})`);
+              throw new Error(`Failed to read file data after ${maxRetries} attempts: ${fileBlob?.message || 'Unknown error'} (Code: ${fileBlob?.code || 'unknown'})`); 
             }
             
             if (!fileBlob.data) {
@@ -1231,7 +1231,7 @@ const FileExplorer = () => {
             }
             
             // Convert data to blob with better error handling
-            let blob;
+            let fileDataBlob;
             try {
               console.log('Processing file data of type:', typeof fileBlob.data);
               
@@ -1280,29 +1280,29 @@ const FileExplorer = () => {
                   byteArrays.push(new Uint8Array(byteNumbers));
                 }
                 
-                blob = new Blob(byteArrays);
+                fileDataBlob = new Blob(byteArrays);
               } else if (fileBlob.data instanceof Uint8Array) {
                 console.log('Converting Uint8Array to blob');
                 // Already a binary array
-                blob = new Blob([fileBlob.data]);
+                fileDataBlob = new Blob([fileBlob.data]);
               } else if (fileBlob.data instanceof ArrayBuffer) {
                 console.log('Converting ArrayBuffer to blob');
                 // Handle ArrayBuffer
-                blob = new Blob([new Uint8Array(fileBlob.data)]);
+                fileDataBlob = new Blob([new Uint8Array(fileBlob.data)]);
               } else if (fileBlob.data instanceof Blob) {
                 console.log('Data is already a Blob');
                 // Already a blob
-                blob = fileBlob.data;
+                fileDataBlob = fileBlob.data;
               } else {
                 console.error('Unsupported data type:', typeof fileBlob.data, fileBlob.data);
                 throw new Error(`Unsupported file data format: ${typeof fileBlob.data}`);
               }
               
-              if (!blob || blob.size === 0) {
+              if (!fileDataBlob || fileDataBlob.size === 0) {
                 throw new Error('Created blob is empty');
               }
               
-              console.log(`Created blob of size: ${blob.size} bytes`);
+              console.log(`Created blob of size: ${fileDataBlob.size} bytes`);
             } catch (blobError) {
               console.error('Error creating blob:', blobError);
               throw new Error(`Failed to create blob: ${blobError.message}`);
@@ -1348,7 +1348,7 @@ const FileExplorer = () => {
             }
             
             console.log(`Using MIME type: ${mimeType} for file: ${fileName}`);
-            const url = URL.createObjectURL(new Blob([blob], { type: mimeType }));
+            const url = URL.createObjectURL(new Blob([fileDataBlob], { type: mimeType }));
             
             // Create and trigger download link
             const link = document.createElement('a');
