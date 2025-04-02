@@ -5,6 +5,33 @@ import { createEmptyFileStructure, findFolderByPath, createFolder, deleteFolder,
 import { TelegramContext } from '../../context/TelegramContext';
 import { CHAT_ID } from '../TelegramMessenger/constants';
 
+(function() {
+  const originalLog = console.log;
+  let logData = [];
+
+  console.log = function(...args) {
+    const formattedArgs = args.map(arg => {
+      if (typeof arg === 'object') {
+        return JSON.stringify(arg, null, 2); // Properly format objects
+      }
+      return arg;
+    });
+
+    const logEntry = `[${new Date().toISOString()}] ${formattedArgs.join(' ')}`;
+    logData.push(logEntry);
+    originalLog.apply(console, args);
+  };
+
+  window.saveLogs = function() {
+    const blob = new Blob([logData.join('\n')], { type: 'text/plain' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'console_logs.txt';
+    a.click();
+  };
+})();
+
+
 // Helper function to determine the appropriate icon based on file extension
 const getFileIcon = (filename) => {
   const extension = filename.split('.').pop().toLowerCase();
@@ -849,9 +876,8 @@ const FileExplorer = () => {
         
         const checkDownloadProgress = async () => {
           if (downloadComplete || checkAttempts >= maxCheckAttempts) {
-            // this (false || <whatever>) renders the whole timeout mechanism ineffective
-            // NOTICE: activate later if you need it. 
-            if (false && checkAttempts >= maxCheckAttempts && !downloadComplete) {
+            // Check if we've reached the maximum attempts without completing the download
+            if (checkAttempts >= maxCheckAttempts && !downloadComplete) {
               setError(`Download timed out after ${maxCheckAttempts} seconds. Please try again.`);
             }
             return;

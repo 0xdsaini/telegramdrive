@@ -181,7 +181,17 @@ const TelegramMessenger = () => {
           if (!update || typeof update !== 'object') return;
           
           try {
-            console.log("TDLib update received:", update["@type"]);
+            
+            // Only log specific update types we're interested in
+            const allowedUpdates = [
+              'updateFile', // This is not compulsory. You can disable if you want.
+              'updateAuthorizationState', // These are COMPULSORY. Authentication process below depends on flow being passed to there.
+              'updateMessageSendSucceeded' // These are COMPULSORY. Authentication process below depends on flow being passed to there.
+            ];
+            if (!allowedUpdates.includes(update["@type"])) {
+              return; // CAUTION: this can skip not just logging, but authorization happening below
+            }
+              // console.log("TDLib update received:", update);
             
             // Handle message send success events
             if (update['@type'] === 'updateMessageSendSucceeded') {
@@ -271,7 +281,7 @@ const TelegramMessenger = () => {
                   setStatus('Connected to Telegram');
                   setIsConnected(true);
                   setContextIsConnected(true);
-        setContextIsConnected(true);
+                  setContextIsConnected(true);
                   setAuthState('ready');
                   
                   // Initialize data and find message ID after a short delay
