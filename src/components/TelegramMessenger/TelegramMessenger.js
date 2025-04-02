@@ -1,4 +1,5 @@
-import { TELEGRAM_API_ID, TELEGRAM_API_HASH, CHAT_ID } from './constants';
+import { TELEGRAM_API_ID, TELEGRAM_API_HASH } from './constants';
+import ChatGroupSelector from '../ChatGroupSelector/ChatGroupSelector';
 import { createEmptyFileStructure, parseFileStructure, serializeFileStructure } from '../../utils/fileStructureUtils';
 
 import React, { useState, useEffect, useRef, useCallback, useContext } from 'react';
@@ -35,12 +36,15 @@ const TelegramMessenger = () => {
     setIsFileStructureLoaded,
     setTelegramClient,
     setIsConnected: setContextIsConnected,
-    setMessageId: setContextMessageId
+    setMessageId: setContextMessageId,
+    selectedChatId,
+    setSelectedChatId,
+    setAvailableChats
   } = useContext(TelegramContext);
   
   // Find message with METADATA_STORAGE prefix to enable message editing
   const findMessageId = useCallback(async () => {
-    if (!clientRef.current || !getChatsPromiseRef.current) return null;
+    if (!clientRef.current || !getChatsPromiseRef.current || !selectedChatId) return null;
     
     try {
       // Wait for the getChats promise to resolve
@@ -50,7 +54,7 @@ const TelegramMessenger = () => {
       // Search for messages containing METADATA_STORAGE
       const result = await clientRef.current.send({
         "@type": "searchChatMessages",
-        "chat_id": CHAT_ID,
+        "chat_id": selectedChatId,
         "query": "METADATA_STORAGE",
         "limit": 5,
         "from_message_id": 0,
@@ -412,10 +416,14 @@ const TelegramMessenger = () => {
       }
 
       // If we have a messageId, edit that message, otherwise send a new one
+      if (!selectedChatId) {
+        throw new Error('No chat selected. Please select a chat group first.');
+      }
+      
       if (messageId) {
-        await editMessage(message, messageId, CHAT_ID);
+        await editMessage(message, messageId, selectedChatId);
       } else {
-        await sendMessage(message, CHAT_ID);
+        await sendMessage(message, selectedChatId);
       }
       
       // Clear the message input after sending
@@ -474,10 +482,14 @@ const TelegramMessenger = () => {
       const messageText = serializeFileStructure(updatedStructure);
       
       // If we have a messageId, edit that message, otherwise send a new one
+      if (!selectedChatId) {
+        throw new Error('No chat selected. Please select a chat group first.');
+      }
+      
       if (messageId) {
-        await editMessage(messageText, messageId, CHAT_ID);
+        await editMessage(messageText, messageId, selectedChatId);
       } else {
-        const result = await sendMessage(messageText, CHAT_ID);
+        const result = await sendMessage(messageText, selectedChatId);
         // If this is the first time sending the message, we need to update the messageId
         if (result && result.id && !messageId) {
           setMessageId(result.id);
@@ -621,6 +633,13 @@ const TelegramMessenger = () => {
     );
   };
 
+  // Effect to find message ID when selected chat changes
+  useEffect(() => {
+    if (isConnected && selectedChatId) {
+      findMessageId();
+    }
+  }, [isConnected, selectedChatId, findMessageId]);
+
   return (
     <div className="telegram-messenger">
       <h2>Telegram Messenger</h2>
@@ -628,6 +647,8 @@ const TelegramMessenger = () => {
         <span className={`status-dot ${isConnected ? 'connected' : 'disconnected'}`}></span>
         <span className="status-text">{status}</span>
       </div>
+      
+      {isConnected && <ChatGroupSelector />}
       
       {renderAuthForms()}
     </div>

@@ -3,7 +3,6 @@ import './FileExplorer.css';
 import { FaFile, FaFileImage, FaFileAlt, FaFileCode, FaFolder, FaTrash, FaArrowUp } from 'react-icons/fa';
 import { createEmptyFileStructure, findFolderByPath, createFolder, deleteFolder, moveFolder, addFile, deleteFile, moveFile } from '../../utils/fileStructureUtils';
 import { TelegramContext } from '../../context/TelegramContext';
-import { CHAT_ID } from '../TelegramMessenger/constants';
 
 (function() {
   const originalLog = console.log;
@@ -69,7 +68,9 @@ const FileExplorer = () => {
     updateFileStructure, 
     isFileStructureLoaded, 
     isConnected,
-    telegramClient
+    telegramClient,
+    selectedChatId,
+    clearDownloadedFiles
   } = useContext(TelegramContext);
   
   // Update current folder when file structure or path changes
@@ -195,7 +196,7 @@ const FileExplorer = () => {
           try {
             await telegramClient.send({
               '@type': 'deleteMessages',
-              'chat_id': CHAT_ID,
+              'chat_id': selectedChatId,
               'message_ids': [file.message_id],
               'revoke': true
             });
@@ -533,7 +534,7 @@ const FileExplorer = () => {
           try {
             result = await telegramClient.send({
               '@type': 'sendMessage',
-              'chat_id': CHAT_ID,
+              'chat_id': selectedChatId,
               'input_message_content': {
                 '@type': 'inputMessageDocument',
                 'document': {
@@ -640,7 +641,7 @@ const FileExplorer = () => {
       try {
         await telegramClient.send({
           '@type': 'deleteMessages',
-          'chat_id': CHAT_ID,
+          'chat_id': selectedChatId,
           'message_ids': [messageId],
           'revoke': true
         });
@@ -709,7 +710,7 @@ const FileExplorer = () => {
         // Try to search for the message by content (filename)
         const searchResult = await telegramClient.send({
           '@type': 'searchChatMessages',
-          'chat_id': CHAT_ID,
+          'chat_id': selectedChatId,
           'query': fileName,
           'limit': 10,
           'from_message_id': 0,
@@ -726,7 +727,7 @@ const FileExplorer = () => {
         try {
           message = await telegramClient.send({
             '@type': 'getMessage',
-            'chat_id': CHAT_ID,
+            'chat_id': selectedChatId,
             'message_id': messageId
           });
           console.log('Message retrieved by ID:', message);
