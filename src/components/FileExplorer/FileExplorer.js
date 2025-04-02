@@ -871,15 +871,53 @@ const FileExplorer = () => {
         let downloadProgress = 0;
         let checkAttempts = 0;
         let consecutiveErrors = 0;
+        let lastDownloadedSize = 0; // Track the last downloaded size for resuming
         const maxCheckAttempts = 60; // Check for up to 1 minute (60 * 1s)
         const maxConsecutiveErrors = 5; // Allow up to 5 consecutive errors before giving up
         
         const checkDownloadProgress = async () => {
-          if (downloadComplete || checkAttempts >= maxCheckAttempts) {
-            // Check if we've reached the maximum attempts without completing the download
-            if (checkAttempts >= maxCheckAttempts && !downloadComplete) {
-              setError(`Download timed out after ${maxCheckAttempts} seconds. Please try again.`);
+          if (downloadComplete) {
+            return;
+          }
+          
+          // Check if we've reached the maximum attempts without completing the download
+          if (checkAttempts >= maxCheckAttempts && !downloadComplete) {
+            console.log(`Download timed out after ${maxCheckAttempts} seconds. Attempting to resume from offset ${lastDownloadedSize}`);
+            setSuccess(`Download timed out. Resuming from ${Math.round(lastDownloadedSize / 1024)} KB...`);
+            
+            // Cancel the current download
+            try {
+              await telegramClient.send({
+                '@type': 'cancelDownloadFile',
+                'file_id': fileId,
+                'only_if_pending': false
+              });
+            } catch (cancelError) {
+              console.error('Error canceling download:', cancelError);
+              // Continue even if cancel fails
             }
+            
+            // Reset attempts counter
+            checkAttempts = 0;
+            
+            // Resume download from last offset
+            try {
+              await telegramClient.send({
+                '@type': 'downloadFile',
+                'file_id': fileId,
+                'priority': 32,
+                'offset': lastDownloadedSize,
+                'limit': 0,
+                'synchronous': false
+              });
+              
+              // Continue checking progress
+              setTimeout(checkDownloadProgress, 1000);
+            } catch (resumeError) {
+              console.error('Error resuming download:', resumeError);
+              setError(`Failed to resume download: ${resumeError.message || 'Unknown error'}`);
+            }
+            
             return;
           }
           
@@ -915,8 +953,11 @@ const FileExplorer = () => {
               return;
             }
             
-            // Update progress if available
+            // Update progress if available and track last downloaded size for resume capability
             if (currentFileInfo.local && currentFileInfo.local.downloaded_size > 0) {
+              // Store the last downloaded size for resuming if needed
+              lastDownloadedSize = currentFileInfo.local.downloaded_size;
+              
               const newProgress = Math.round((currentFileInfo.local.downloaded_size / currentFileInfo.size) * 100);
               if (newProgress !== downloadProgress) {
                 downloadProgress = newProgress;
@@ -1072,12 +1113,29 @@ const FileExplorer = () => {
             if (!fileInfo.local || !fileInfo.local.is_downloading_completed) {
               setSuccess(`Downloading ${fileName}... Please wait.`);
               try {
-                // Force a synchronous download
+                // Get current download state to check for partial downloads
+                const currentFileState = await telegramClient.send({
+                  '@type': 'getFile',
+                  'file_id': fileInfo.id
+                });
+                
+                // Determine if we have a partial download to resume from
+                let startOffset = 0;
+                if (currentFileState && 
+                    currentFileState.local && 
+                    currentFileState.local.downloaded_size > 0 && 
+                    !currentFileState.local.is_downloading_completed) {
+                  startOffset = currentFileState.local.downloaded_size;
+                  console.log(`Resuming download from offset: ${startOffset} bytes`);
+                  setSuccess(`Resuming download of ${fileName} from ${Math.round(startOffset/1024)} KB...`);
+                }
+                
+                // Force a synchronous download from the appropriate offset
                 const downloadResult = await telegramClient.send({
                   '@type': 'downloadFile',
                   'file_id': fileInfo.id,
                   'priority': 32, // Higher priority
-                  'offset': 0,
+                  'offset': startOffset,
                   'limit': 0,
                   'synchronous': true // Use synchronous download to ensure completion
                 });
