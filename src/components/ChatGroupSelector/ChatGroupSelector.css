@@ -4,6 +4,10 @@
   padding: 15px;
   margin-bottom: 20px;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .selector-header {
@@ -11,6 +15,8 @@
   justify-content: space-between;
   align-items: center;
   margin-bottom: 15px;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .selector-header h3 {
@@ -67,10 +73,11 @@
   list-style: none;
   padding: 0;
   margin: 0;
-  max-height: 200px;
+  max-height: 300px;
   overflow-y: auto;
   border: 1px solid #ddd;
   border-radius: 4px;
+  width: 100%;
 }
 
 .chat-item {
@@ -81,6 +88,8 @@
   justify-content: space-between;
   align-items: center;
   transition: background-color 0.2s;
+  flex-wrap: nowrap;
+  overflow: hidden;
 }
 
 .chat-item:last-child {
@@ -98,6 +107,10 @@
 
 .chat-title {
   font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 70%;
 }
 
 .help-text {

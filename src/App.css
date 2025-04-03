@@ -1,5 +1,6 @@
 .App {
-  text-align: center;
+  text-align: left;
+  width: 100%;
 }
 
 .app-container {
@@ -7,29 +8,21 @@
   flex-direction: column;
   height: 100vh;
   overflow: hidden;
+  background-color: #f5f7fa;
 }
 
-.App {
-  text-align: left;
-  width: 100%;
-}
-
-/* Adjust FileExplorer to take 60% of the height */
-.app-container > div:first-child {
-  flex: 0.6;
-  overflow: auto;
-  border-bottom: 1px solid #e9ecef;
-}
-
-/* Adjust TelegramMessenger to take 40% of the height */
-.app-container > div:last-child {
-  flex: 0.4;
+/* File explorer container styles */
+.file-explorer-container {
   display: flex;
-  justify-content: center;
-  align-items: flex-start;
-  padding-top: 10px;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* Make file explorer take full available height */
+.file-explorer-container > div:nth-child(2) {
+  flex: 1;
   overflow: auto;
-  background-color: #f8f9fa;
 }
 
 .App-logo {

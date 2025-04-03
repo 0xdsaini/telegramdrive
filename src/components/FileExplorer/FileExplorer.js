@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useContext } from 'react';
 import './FileExplorer.css';
-import { FaFile, FaFileImage, FaFileAlt, FaFileCode, FaFolder, FaTrash, FaArrowUp } from 'react-icons/fa';
+import { FaFile, FaFileImage, FaFileAlt, FaFileCode, FaFolder, FaTrash, FaArrowUp, FaPlus, FaUpload, FaHome, FaCheck, FaDownload } from 'react-icons/fa';
 import { createEmptyFileStructure, findFolderByPath, createFolder, deleteFolder, moveFolder, addFile, deleteFile, moveFile } from '../../utils/fileStructureUtils';
 import { TelegramContext } from '../../context/TelegramContext';
 
@@ -61,6 +61,7 @@ const FileExplorer = () => {
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
   
   // Access the Telegram context
   const { 
@@ -1423,294 +1424,164 @@ const FileExplorer = () => {
 
   return (
     <div className="file-explorer">
-      <nav className="file-explorer-nav">
+      <div className="file-explorer-nav">
         <div className="breadcrumb">
-          {currentPath.split('/').map((segment, index) => (
+          <span 
+            className="breadcrumb-item" 
+            onClick={() => handlePathClick(0)}
+          >
+            <FaHome style={{ marginRight: '5px' }} /> Home
+          </span>
+          
+          {currentPath !== '/' && currentPath.split('/').filter(Boolean).map((segment, index) => (
             <span 
               key={index} 
               className="breadcrumb-item"
-              onClick={() => handlePathClick(index)}
+              onClick={() => handlePathClick(index + 1)}
             >
-              {segment || 'Home'}
+              {segment}
             </span>
           ))}
         </div>
-        <button 
-          className="new-folder-button" 
-          onClick={handleNewFolderClick}
-          disabled={!isConnected}
-        >
-          New Folder
-        </button>
-      </nav>
+      </div>
       
-      <main 
-        className="file-explorer-content"
+      <div 
+        className={`file-explorer-content ${isDragging ? 'drag-over' : ''}`}
         onDrop={handleDrop}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDragEnd={handleDragEnd}
       >
+        {error && (
+          <div className="error-message">
+            <FaTrash style={{ marginRight: '8px' }} />
+            {error}
+          </div>
+        )}
+        
+        {success && (
+          <div className="success-message">
+            <FaCheck style={{ marginRight: '8px' }} />
+            {success}
+          </div>
+        )}
+        
         <div className="action-buttons">
           <button 
             className="upload-button" 
-            onClick={handleUploadClick} 
-            disabled={uploading || !isConnected}
+            onClick={() => fileInputRef.current.click()}
           >
-            {uploading ? 'Uploading...' : 'Upload Files'}
+            <FaUpload /> Upload Files
           </button>
-          <input
-            type="file"
-            ref={fileInputRef}
-            style={{ display: 'none' }}
-            onChange={handleFileSelect}
+          
+          <button 
+            className="new-folder-button" 
+            onClick={handleNewFolderClick}
+          >
+            <FaFolder /> New Folder
+          </button>
+          
+          {uploading && (
+            <div className="loading-indicator">
+              <div className="spinner"></div>
+              Uploading...
+            </div>
+          )}
+          
+          <input 
+            type="file" 
+            ref={fileInputRef} 
+            style={{ display: 'none' }} 
+            onChange={(e) => handleFiles(Array.from(e.target.files))}
             multiple
           />
-          {uploading && <div className="loading-indicator">Uploading files, please wait...</div>}
         </div>
-        {error && <div className="error-message">{error}</div>}
-        {success && <div className="success-message">{success}</div>}
         
-        {/* Parent folder drop area - only show when not in root directory */}
         {currentPath !== '/' && (
           <div 
             className="parent-folder-drop-area"
-            onDrop={async (e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              e.currentTarget.classList.remove('drag-over');
-              
-              if (!isConnected || !telegramClient) {
-                setError('Not connected to Telegram. Please authenticate first.');
-                return;
-              }
-              
-              // Handle file drops from the file system
-              if (e.dataTransfer.files.length > 0) {
-                const droppedFiles = Array.from(e.dataTransfer.files);
-                handleFiles(droppedFiles);
-                return;
-              }
-              
-              // Get drag data
-              const dragData = e.dataTransfer.getData('text/plain');
-              
-              // Get parent path
-              const pathSegments = currentPath.split('/').filter(Boolean);
-              const parentPathSegments = pathSegments.slice(0, -1);
-              const parentPath = parentPathSegments.length === 0 ? '/' : '/' + parentPathSegments.join('/');
-              
-              // Handle folder drops to parent directory
-              if (dragData.startsWith('folder:')) {
-                const sourcePath = dragData.replace('folder:', '');
-                
-                // Normalize paths for comparison
-                const normalizedSourcePath = sourcePath.startsWith('/') ? sourcePath : `/${sourcePath}`;
-                const normalizedParentPath = parentPath.startsWith('/') ? parentPath : `/${parentPath}`;
-                
-                // Don't allow invalid moves
-                if (normalizedSourcePath === normalizedParentPath || normalizedParentPath.startsWith(normalizedSourcePath + '/')) {
-                  setError('Cannot move a folder into itself or its subfolder');
-                  return;
-                }
-                
-                try {
-                  setError(null);
-                  setSuccess(null);
-                  
-                  // Move folder to parent directory
-                  const updatedStructure = moveFolder(fileStructure, sourcePath, parentPath);
-                  
-                  // Update the file structure in Telegram
-                  const success = await window.updateTelegramFileStructure(updatedStructure);
-                  
-                  if (success) {
-                    setSuccess(`Folder moved successfully to parent folder`);
-                  } else {
-                    setError('Failed to move folder');
-                  }
-                } catch (error) {
-                  console.error('Failed to move folder:', error);
-                  setError('Failed to move folder: ' + error.message);
-                }
-              }
-              // Handle file drops
-              else if (dragData.startsWith('file:')) {
-                const sourceFilePath = dragData.replace('file:', '');
-                const fileName = sourceFilePath.split('/').pop();
-                
-                // Get the parent path of the source file
-                const sourcePathSegments = sourceFilePath.split('/').filter(Boolean);
-                const sourceParentPathSegments = sourcePathSegments.slice(0, -1);
-                const sourceParentPath = sourceParentPathSegments.length === 0 ? '/' : '/' + sourceParentPathSegments.join('/');
-                
-                try {
-                  setError(null);
-                  setSuccess(null);
-                  
-                  // Move file to parent directory
-                  const updatedStructure = moveFile(fileStructure, sourceParentPath, fileName, parentPath);
-                  
-                  // Update the file structure in Telegram
-                  const success = await window.updateTelegramFileStructure(updatedStructure);
-                  
-                  if (success) {
-                    setSuccess(`File "${fileName}" moved successfully to parent folder`);
-                  } else {
-                    setError('Failed to move file');
-                  }
-                } catch (error) {
-                  console.error('Failed to move file:', error);
-                  setError('Failed to move file: ' + error.message);
-                }
-              }
-            }}
-            onDragOver={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              e.currentTarget.classList.add('drag-over');
-            }}
-            onDragLeave={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              e.currentTarget.classList.remove('drag-over');
-            }}
+            onClick={() => handlePathClick(currentPath.split('/').filter(Boolean).length - 1)}
+            onDrop={(e) => handleFolderDrop(e)}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
           >
-            <FaArrowUp size={20} />
-            <span style={{ marginLeft: '10px' }}>Drop here to move to parent folder</span>
+            <FaArrowUp className="parent-folder-icon" />
+            <span className="parent-folder-label">Go to parent folder</span>
           </div>
         )}
         
         <div className="file-grid">
-          {!currentFolder ? (
-            <div className="empty-state">
-              <p>Loading...</p>
-            </div>
-          ) : currentFolder.subfolders.length === 0 && currentFolder.files.length === 0 ? (
-            <div 
-              className="empty-state"
-              onDrop={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                e.currentTarget.classList.remove('drag-over');
-                
-                if (e.dataTransfer.files.length > 0) {
-                  const droppedFiles = Array.from(e.dataTransfer.files);
-                  setSuccess(`Preparing to upload ${droppedFiles.length} file(s)...`);
-                  handleFiles(droppedFiles);
-                }
-              }}
-              onDragOver={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                e.currentTarget.classList.add('drag-over');
-              }}
-              onDragLeave={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                e.currentTarget.classList.remove('drag-over');
-              }}
-            >
-              <p>This folder is empty</p>
-              <p>Drop files here to upload</p>
-              <button className="upload-button" onClick={handleUploadClick}>Select Files</button>
-              <input
-                type="file"
-                ref={fileInputRef}
-                style={{ display: 'none' }}
-                onChange={handleFileSelect}
-                multiple
-              />
+          {currentFolder && currentFolder.subfolders && currentFolder.subfolders.length === 0 && 
+           currentFolder.files && currentFolder.files.length === 0 ? (
+            <div className={`empty-state ${isDragging ? 'drag-over' : ''}`}>
+              <FaFolder style={{ fontSize: '48px', color: '#adb5bd', marginBottom: '16px' }} />
+              <h3>This folder is empty</h3>
+              <p>Drag and drop files here or use the upload button</p>
+              <button 
+                className="upload-button" 
+                onClick={() => fileInputRef.current.click()}
+              >
+                <FaUpload /> Upload Files
+              </button>
             </div>
           ) : (
             <>
-              {currentFolder.subfolders.map((folder, index) => (
+              {currentFolder && currentFolder.subfolders && currentFolder.subfolders.map((folder) => (
                 <div 
-                key={`folder-${index}`} 
-                className="file-item"
-                draggable="true"
-                onDragStart={(e) => {
-                  e.dataTransfer.setData('text/plain', `folder:${currentPath === '/' ? folder.name : `${currentPath}/${folder.name}`}`);
-                }}
-                onDragOver={(e) => handleFolderDragOver(e, folder.name)}
-                onDragLeave={handleFolderDragLeave}
-                onDrop={(e) => handleFolderDrop(e, folder.name)}
-                onDragEnd={handleDragEnd}
-              >
-                  <div onClick={() => handleFolderClick(folder.name)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-                    <div style={{ display: 'flex', alignItems: 'center' }}>
-                      <div className="file-icon"><FaFolder /></div>
-                      <span className="file-name">{folder.name}</span>
-                    </div>
-                    <button
-                      onClick={(e) => handleDeleteFolder(folder.name, e)}
-                      style={{
-                        background: 'none',
-                        border: 'none',
-                        cursor: 'pointer',
-                        color: '#dc3545',
-                        padding: '4px',
-                        marginLeft: '8px'
-                      }}
-                      title="Delete folder"
-                    >
-                      <FaTrash size={14} />
-                    </button>
-                  </div>
+                  key={folder.name} 
+                  className="file-item folder-item"
+                  onClick={() => handleFolderClick(folder.name)}
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData('text/plain', `folder:${currentPath === '/' ? `/${folder.name}` : `${currentPath}/${folder.name}`}`);
+                  }}
+                  onDragOver={(e) => handleFolderDragOver(e, folder.name)}
+                  onDragLeave={handleFolderDragLeave}
+                  onDrop={(e) => handleFolderDrop(e, folder.name)}
+                >
+                  <FaFolder style={{ fontSize: '42px', color: '#0088cc' }} />
+                  <span className="file-name">{folder.name}</span>
+                  <button 
+                    className="delete-button"
+                    onClick={(e) => handleDeleteFolder(folder.name, e)}
+                    title="Delete folder"
+                  >
+                    <FaTrash />
+                  </button>
                 </div>
               ))}
-              {currentFolder.files.map((file, index) => (
+              
+              {currentFolder && currentFolder.files && currentFolder.files.map((file) => (
                 <div 
-                  key={`file-${file.message_id || index}`} 
+                  key={file.filename} 
                   className="file-item"
-                  draggable="true"
+                  draggable
                   onDragStart={(e) => {
-                    e.dataTransfer.setData('text/plain', `file:${currentPath === '/' ? file.filename : `${currentPath}/${file.filename}`}`);
+                    e.dataTransfer.setData('text/plain', `file:${currentPath === '/' ? `/${file.filename}` : `${currentPath}/${file.filename}`}`);
                   }}
-                  onDragEnd={handleDragEnd}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-                    <div style={{ display: 'flex', alignItems: 'center' }}>
-                      <div className="file-icon">{getFileIcon(file.filename)}</div>
-                      <span className="file-name">{file.filename}</span>
-                    </div>
-                    <div style={{ display: 'flex' }}>
-                      <button
-                        onClick={(e) => handleDownloadFile(file.filename, e)}
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          cursor: 'pointer',
-                          color: '#0d6efd',
-                          padding: '4px',
-                          marginLeft: '8px'
-                        }}
-                        title="Download file"
-                      >
-                        <FaArrowUp style={{ transform: 'rotate(180deg)' }} size={14} />
-                      </button>
-                      <button
-                        onClick={(e) => handleDeleteFile(file.filename, e)}
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          cursor: 'pointer',
-                          color: '#dc3545',
-                          padding: '4px',
-                          marginLeft: '8px'
-                        }}
-                        title="Delete file"
-                      >
-                        <FaTrash size={14} />
-                      </button>
-                    </div>
-                  </div>
+                  {getFileIcon(file.filename)}
+                  <span className="file-name">{file.filename}</span>
+                  <button 
+                    className="download-button"
+                    onClick={(e) => handleDownloadFile(file.filename, e)}
+                    title="Download file"
+                  >
+                    <FaDownload />
+                  </button>
+                  <button 
+                    className="delete-button"
+                    onClick={(e) => handleDeleteFile(file.filename, e)}
+                    title="Delete file"
+                  >
+                    <FaTrash />
+                  </button>
                 </div>
               ))}
             </>
           )}
         </div>
-      </main>
+      </div>
     </div>
   );
 };
