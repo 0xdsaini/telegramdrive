@@ -81,6 +81,8 @@ export const TelegramProvider = ({ children }) => {
       // Clear selected chat from localStorage
       localStorage.removeItem(SELECTED_CHAT_KEY);
       localStorage.removeItem(SELECTED_CHAT_NAME_KEY);
+      // Clear message ID from localStorage
+      localStorage.removeItem('telegram-metadata-message-id'); //NOTICE: This is problematic. hardcoding should not be there.
       
       // Clear any downloaded files from storage
       clearDownloadedFiles();

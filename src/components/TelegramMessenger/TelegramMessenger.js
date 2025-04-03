@@ -42,6 +42,9 @@ const TelegramMessenger = () => {
     setAvailableChats
   } = useContext(TelegramContext);
   
+  // Constants for localStorage keys
+  const MESSAGE_ID_KEY = 'telegram-metadata-message-id';
+  
   // Find message with METADATA_STORAGE prefix to enable message editing
   const findMessageId = useCallback(async () => {
     if (!clientRef.current || !getChatsPromiseRef.current || !selectedChatId) return null;
@@ -51,52 +54,176 @@ const TelegramMessenger = () => {
       await getChatsPromiseRef.current;
       console.log("Searching for METADATA_STORAGE message...");
       
-      // Search for messages containing METADATA_STORAGE
-      const result = await clientRef.current.send({
-        "@type": "searchChatMessages",
-        "chat_id": selectedChatId,
-        "query": "METADATA_STORAGE",
-        "limit": 5,
-        "from_message_id": 0,
-        "offset": 0,
-        "only_missed": false
-      });
-      
-      // Check if we found any messages
-      if (result.messages && result.messages.length > 0) {
-        const foundId = result.messages[0].id;
-        console.log("Found METADATA_STORAGE message with ID:", foundId);
-        setMessageId(foundId);
-        setContextMessageId(foundId);
-        
-        // Load file structure from message
+      console.log("Trying...localStorage first.")
+      // First try to get message_id from localStorage
+      const savedMessageId = localStorage.getItem(MESSAGE_ID_KEY);
+      if (savedMessageId) {
+        console.log("Found saved message ID in localStorage:", savedMessageId);
         try {
-          const messageContent = result.messages[0].content;
-          if (messageContent && messageContent.text && messageContent.text.text) {
-            const parsedStructure = parseFileStructure(messageContent.text.text);
-            console.log("Loaded file structure:", parsedStructure);
-            setFileStructure(parsedStructure);
+          // Verify the saved message still exists and contains METADATA_STORAGE
+          const messageResult = await clientRef.current.send({
+            "@type": "getMessage",
+            "chat_id": selectedChatId,
+            "message_id": parseInt(savedMessageId, 10)
+          });
+          
+          if (messageResult && 
+              messageResult.content && 
+              messageResult.content.text && 
+              messageResult.content.text.text && 
+              messageResult.content.text.text.includes("METADATA_STORAGE")) {
+            
+            console.log("Verified saved message ID is valid:", savedMessageId);
+            setMessageId(parseInt(savedMessageId, 10));
+            setContextMessageId(parseInt(savedMessageId, 10));
+            
+            // Load file structure from message
+            try {
+              const parsedStructure = parseFileStructure(messageResult.content.text.text);
+              console.log("Loaded file structure from saved message ID:", parsedStructure);
+              setFileStructure(parsedStructure);
+              setIsFileStructureLoaded(true);
+              return parseInt(savedMessageId, 10);
+            } catch (parseError) {
+              console.error("Error parsing file structure from saved message:", parseError);
+              // Continue to search methods if parsing fails
+            }
+          } else {
+            console.log("Saved message ID is no longer valid, will search again");
+            // Continue to search methods if saved ID is invalid
+          }
+        } catch (verifyError) {
+          console.error("Error verifying saved message ID:", verifyError);
+          // Continue to search methods if verification fails
+        }
+      }
+      
+      // Method 1: Try searchChatMessages first
+      try {
+        console.log("Trying searchChatMessages...");
+        const searchResult = await clientRef.current.send({
+          "@type": "searchChatMessages",
+          "chat_id": selectedChatId,
+          "query": "METADATA_STORAGE",
+          "limit": 5,
+          "from_message_id": 0,
+          "offset": 0,
+          "only_missed": false
+        });
+        
+        if (searchResult.messages && searchResult.messages.length > 0) {
+          const foundId = searchResult.messages[0].id;
+          console.log("Found METADATA_STORAGE message with searchChatMessages, ID:", foundId);
+          setMessageId(foundId);
+          setContextMessageId(foundId);
+          localStorage.setItem(MESSAGE_ID_KEY, foundId.toString());
+          
+          // Load file structure from message
+          try {
+            const messageContent = searchResult.messages[0].content;
+            if (messageContent && messageContent.text && messageContent.text.text) {
+              const parsedStructure = parseFileStructure(messageContent.text.text);
+              console.log("Loaded file structure:", parsedStructure);
+              setFileStructure(parsedStructure);
+              setIsFileStructureLoaded(true);
+            }
+          } catch (error) {
+            console.error("Error loading file structure:", error);
+            setFileStructure(createEmptyFileStructure());
             setIsFileStructureLoaded(true);
           }
-        } catch (error) {
-          console.error("Error loading file structure:", error);
-          setFileStructure(createEmptyFileStructure());
-        setIsFileStructureLoaded(true);
-          setIsFileStructureLoaded(true);
+          
+          return foundId;
+        } else {
+          console.log("No METADATA_STORAGE messages found with searchChatMessages");
+          // Continue to fallback method
+        }
+      } catch (searchError) {
+        console.error('Error with searchChatMessages:', searchError);
+        // Continue to fallback method
+      }
+      
+      // Method 2: Fallback to getChatHistory if searchChatMessages fails
+      try {
+        console.log("Falling back to getChatHistory...");
+        let foundMessage = null;
+        let fromMessageId = 0;
+        const maxAttempts = 5; // NOTICE: Adjust this later if number of messages starts getting somewhat high(currently, per attempt=50 messages, 5 attempts = 50*5 = 250 messages it'll retrieve only. If your METADATA_STORAGE message is in the beginning of the chat, and you have more than 250 messages after that, you'll miss that METADATA_STORAGE message. If you expect a lot of messages, you SHOULD increase this limit. And this will definitely happen as you start storing files in it more and more and more.)
+        
+        for (let attempt = 0; attempt < maxAttempts && !foundMessage; attempt++) {
+          const historyResult = await clientRef.current.send({
+            "@type": "getChatHistory",
+            "chat_id": selectedChatId,
+            "from_message_id": fromMessageId,
+            "offset": 0,
+            "limit": 50, // Get 50 messages at a time
+            "only_local": false
+          });
+          
+          if (historyResult.messages && historyResult.messages.length > 0) {
+            // Update fromMessageId for next iteration if needed
+            fromMessageId = historyResult.messages[historyResult.messages.length - 1].id;
+            
+            // Search for METADATA_STORAGE in the messages
+            foundMessage = historyResult.messages.find(msg => 
+              msg.content && 
+              msg.content.text && 
+              msg.content.text.text && 
+              msg.content.text.text.includes("METADATA_STORAGE")
+            );
+            
+            if (foundMessage) {
+              const foundId = foundMessage.id;
+              console.log("Found METADATA_STORAGE message with getChatHistory, ID:", foundId);
+              setMessageId(foundId);
+              setContextMessageId(foundId);
+              localStorage.setItem(MESSAGE_ID_KEY, foundId.toString());
+              
+              // Load file structure from message
+              try {
+                if (foundMessage.content && foundMessage.content.text && foundMessage.content.text.text) {
+                  const parsedStructure = parseFileStructure(foundMessage.content.text.text);
+                  console.log("Loaded file structure:", parsedStructure);
+                  setFileStructure(parsedStructure);
+                  setIsFileStructureLoaded(true);
+                }
+              } catch (error) {
+                console.error("Error loading file structure:", error);
+                setFileStructure(createEmptyFileStructure());
+                setIsFileStructureLoaded(true);
+              }
+              
+              return foundId;
+            }
+            
+            // If we got fewer messages than requested, we've reached the end
+            if (historyResult.messages.length < 50) {
+              break;
+            }
+          } else {
+            // No more messages to check
+            break;
+          }
         }
         
-        return foundId;
-      } else {
-        console.log("No METADATA_STORAGE messages found");
+        // If we get here, we didn't find the message
+        console.log("No METADATA_STORAGE messages found with getChatHistory");
+        setFileStructure(createEmptyFileStructure());
+        setIsFileStructureLoaded(true);
+        return null;
+      } catch (historyError) {
+        console.error('Error with getChatHistory:', historyError);
         setFileStructure(createEmptyFileStructure());
         setIsFileStructureLoaded(true);
         return null;
       }
     } catch (error) {
       console.error('Error fetching message ID:', error);
+      setFileStructure(createEmptyFileStructure());
+      setIsFileStructureLoaded(true);
       return null;
     }
-  }, []);
+  }, [selectedChatId]);
 
   // Initialize TDLib
   useEffect(() => {
@@ -181,6 +308,7 @@ const TelegramMessenger = () => {
         
         clientRef.current = client;
         setTelegramClient(client);
+        window.tdClient = client;
         console.log("TDLib client created");
         
         // Set up event handling before setting parameters
@@ -462,6 +590,12 @@ const TelegramMessenger = () => {
       console.log('Message edited successfully');
       setStatus('Message edited successfully');
       
+      // If this is a METADATA_STORAGE message, ensure its ID is saved to localStorage
+      if (newMessage.includes("METADATA_STORAGE")) {
+        console.log("Ensuring METADATA_STORAGE message ID is saved to localStorage:", message_id);
+        localStorage.setItem(MESSAGE_ID_KEY, message_id.toString());
+      }
+      
       // Reset status after 3 seconds
       setTimeout(() => {
         if (isConnected) {
@@ -500,6 +634,8 @@ const TelegramMessenger = () => {
         if (result && result.id && !messageId) {
           setMessageId(result.id);
           setContextMessageId(result.id);
+          // Save the message ID to localStorage
+          localStorage.setItem(MESSAGE_ID_KEY, result.id.toString());
         }
       }
       
@@ -516,6 +652,14 @@ const TelegramMessenger = () => {
     // Add a method to the window object that the FileExplorer can call
     window.updateTelegramFileStructure = updateFileStructure;
    }, [messageId, selectedChatId]);
+   
+  // Clear message ID from localStorage when logging out
+  useEffect(() => {
+    if (!isConnected && authState === 'initial') {
+      // If we're disconnected and back to initial auth state, clear the message ID
+      // localStorage.removeItem(MESSAGE_ID_KEY); // WTF why did AI generate this even. why is this whole useEffect even here. WTF AI.
+    }
+  }, [isConnected, authState]);
   
     // Send a new message to Telegram
   const sendMessage = async (newMessage, chat_id) => {
@@ -539,6 +683,12 @@ const TelegramMessenger = () => {
       
       console.log('Message sent successfully');
       setStatus('Message sent successfully');
+
+      // If this is a METADATA_STORAGE message, save its ID to localStorage when we get it
+      if (messageText.includes("METADATA_STORAGE") && result && result.id) {
+        console.log("Saving new METADATA_STORAGE message ID to localStorage:", result.id);
+        localStorage.setItem(MESSAGE_ID_KEY, result.id.toString());
+      }
 
       // Reset status after 3 seconds
       setTimeout(() => {
