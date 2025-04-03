@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { TelegramContext } from '../../context/TelegramContext';
+import { FaUsers, FaSignOutAlt, FaSyncAlt, FaSearch, FaCheck } from 'react-icons/fa';
 import './ChatGroupSelector.css';
 
 const ChatGroupSelector = () => {
@@ -90,7 +91,17 @@ const ChatGroupSelector = () => {
   return (
     <div className="chat-group-selector">
       <div className="selector-header">
-        <h3>{selectedChatId && selectedChatName ? 'Selected Group' : 'Select Chat Group'}</h3>
+        <h3>
+          {selectedChatId && selectedChatName ? (
+            <>
+              <FaUsers style={{ marginRight: '8px' }} /> Selected Group
+            </>
+          ) : (
+            <>
+              <FaUsers style={{ marginRight: '8px' }} /> Select Chat Group
+            </>
+          )}
+        </h3>
         <div className="selector-actions">
           {!selectedChatId && (
             <button 
@@ -99,7 +110,7 @@ const ChatGroupSelector = () => {
               disabled={!isConnected || isLoading}
               title="Refresh chat list"
             >
-              ↻
+              <FaSyncAlt /> Refresh
             </button>
           )}
           <button 
@@ -107,22 +118,55 @@ const ChatGroupSelector = () => {
             onClick={handleLogout}
             title="Logout"
           >
-            Logout
+            <FaSignOutAlt /> Logout
           </button>
         </div>
       </div>
       
+      {!selectedChatId && !isLoading && !error && chatGroups.length > 0 && (
+        <div className="search-container">
+          <FaSearch style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#6c757d' }} />
+          <input
+            type="text"
+            className="search-input"
+            placeholder="Search chat groups..."
+            onChange={(e) => {
+              const query = e.target.value.toLowerCase();
+              const filtered = chatGroups.filter(chat => 
+                chat.title.toLowerCase().includes(query)
+              );
+              setChatGroups(filtered.length > 0 ? filtered : chatGroups);
+            }}
+          />
+        </div>
+      )}
+      
       {selectedChatId && selectedChatName ? (
         <div className="selected-chat-info">
+          <FaCheck style={{ fontSize: '20px', color: '#0088cc', marginBottom: '8px' }} />
           <p>Group has been selected: <strong>{selectedChatName}</strong></p>
           <p className="help-text">You can change the group after logging out and logging back in.</p>
         </div>
       ) : isLoading ? (
-        <div className="loading-message">Loading chat groups...</div>
+        <div className="loading-message">
+          <div className="loading-spinner"></div>
+          <p>Loading chat groups...</p>
+        </div>
       ) : error ? (
-        <div className="error-message">{error}</div>
+        <div className="error-message">
+          <p>{error}</p>
+          <button className="refresh-button" onClick={handleRefresh}>
+            <FaSyncAlt /> Try Again
+          </button>
+        </div>
       ) : chatGroups.length === 0 ? (
-        <div className="empty-message">No chat groups available</div>
+        <div className="empty-message">
+          <FaUsers style={{ fontSize: '28px', opacity: '0.6' }} />
+          <p>No chat groups available</p>
+          <button className="refresh-button" onClick={handleRefresh}>
+            <FaSyncAlt /> Try Again
+          </button>
+        </div>
       ) : (
         <ul className="chat-list">
           {chatGroups.map((chat) => (
@@ -131,8 +175,16 @@ const ChatGroupSelector = () => {
               className={`chat-item ${selectedChatId === chat.id ? 'selected' : ''}`}
               onClick={() => handleChatSelect(chat.id, chat.title)}
             >
-              <span className="chat-title">{chat.title}</span>
-              <span className="chat-type">{chat.type.replace('chatType', '')}</span>
+              <div className="chat-item-content">
+                <div className="chat-avatar">
+                  {chat.title.charAt(0).toUpperCase()}
+                </div>
+                <span className="chat-title">{chat.title}</span>
+              </div>
+              <div className="chat-item-right">
+                <span className="chat-type">{chat.type.replace('chatType', '')}</span>
+                {selectedChatId === chat.id && <FaCheck className="check-icon" />}
+              </div>
             </li>
           ))}
         </ul>

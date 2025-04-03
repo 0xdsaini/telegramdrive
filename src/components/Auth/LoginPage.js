@@ -29,11 +29,12 @@ const LoginPage = () => {
     setVerificationCode(code);
     
     // Auto-submit when code reaches 5 digits (required OTP length)
-    if (code.length === 6 && !isLoading) {
-      // Use a small timeout to ensure state is updated
+    if (code.length === 5 && !isLoading) {
+      // Use a longer timeout to ensure state is fully updated before submission
       setTimeout(() => {
-        handleVerificationCodeSubmit({ preventDefault: () => {} });
-      }, 100);
+        // Ensure we're using the latest verification code value with all 5 digits
+        handleVerificationCodeSubmit({ preventDefault: () => {}, currentCode: code });
+      }, 500);
     }
   };
   
@@ -88,10 +89,16 @@ const LoginPage = () => {
       // Add a small delay before sending the code to ensure Telegram's servers are ready
       await new Promise(resolve => setTimeout(resolve, 1000));
       
+      // Get the verification code - either from the event parameter or state
+      const codeToSend = e.currentCode || verificationCode;
+      
+      // Log the verification code to ensure all 5 digits are being sent
+      console.log('Sending verification code:', codeToSend);
+      
       // Send verification code to Telegram
       await telegramClient.send({
         '@type': 'checkAuthenticationCode',
-        'code': verificationCode
+        'code': codeToSend
       });
       
       // Authentication should be complete at this point

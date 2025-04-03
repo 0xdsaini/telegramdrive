@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { TelegramContext } from '../../context/TelegramContext';
-import { FaUsers, FaSearch, FaArrowLeft, FaCheck } from 'react-icons/fa';
+import { FaUsers, FaSearch, FaArrowLeft, FaCheck, FaSync, FaTimes, FaUserFriends } from 'react-icons/fa';
 import './Auth.css';
 
 const GroupSelector = ({ onBack }) => {
@@ -9,6 +9,7 @@ const GroupSelector = ({ onBack }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [selectedGroup, setSelectedGroup] = useState(null);
   
   const { 
     telegramClient, 
@@ -99,7 +100,13 @@ const GroupSelector = ({ onBack }) => {
   };
 
   const handleChatSelect = (chatId, chatName) => {
-    setSelectedChatId(chatId, chatName);
+    // First update the local state to show visual feedback
+    setSelectedGroup(chatId);
+    
+    // Then update the context after a short delay to allow for visual feedback
+    setTimeout(() => {
+      setSelectedChatId(chatId, chatName);
+    }, 300);
   };
 
   const handleSearchChange = (e) => {
@@ -113,10 +120,18 @@ const GroupSelector = ({ onBack }) => {
   return (
     <div className="group-selector-container">
       <div className="group-selector-header">
-        <button className="back-button" onClick={onBack}>
+        <button className="back-button" onClick={onBack} aria-label="Go back">
           <FaArrowLeft />
         </button>
         <h2>Select a Group</h2>
+        <button 
+          className="refresh-button" 
+          onClick={handleRefresh} 
+          disabled={isLoading}
+          aria-label="Refresh groups"
+        >
+          <FaSync className={isLoading ? 'spin' : ''} />
+        </button>
       </div>
       
       <div className="search-container">
@@ -127,7 +142,17 @@ const GroupSelector = ({ onBack }) => {
           value={searchQuery}
           onChange={handleSearchChange}
           className="search-input"
+          aria-label="Search groups"
         />
+        {searchQuery && (
+          <button 
+            className="clear-search-button" 
+            onClick={() => setSearchQuery('')}
+            aria-label="Clear search"
+          >
+            <FaTimes />
+          </button>
+        )}
       </div>
       
       <div className="groups-container">
@@ -138,14 +163,15 @@ const GroupSelector = ({ onBack }) => {
           </div>
         ) : error ? (
           <div className="error-container">
+            <FaUsers className="error-icon" />
             <p>{error}</p>
-            <button className="refresh-button" onClick={handleRefresh}>
+            <button className="retry-button" onClick={handleRefresh}>
               Try Again
             </button>
           </div>
         ) : filteredGroups.length === 0 ? (
           <div className="empty-container">
-            <FaUsers className="empty-icon" />
+            <FaUserFriends className="empty-icon" />
             <p>{searchQuery ? 'No matching groups found' : 'No groups available'}</p>
             {searchQuery && (
               <button className="clear-search" onClick={() => setSearchQuery('')}>
@@ -154,26 +180,33 @@ const GroupSelector = ({ onBack }) => {
             )}
           </div>
         ) : (
-          <ul className="group-list">
-            {filteredGroups.map((group) => (
-              <li 
-                key={group.id} 
-                className="group-item"
-                onClick={() => handleChatSelect(group.id, group.title)}
-              >
-                <div className="group-avatar">
-                  {group.title.charAt(0).toUpperCase()}
-                </div>
-                <div className="group-info">
-                  <span className="group-title">{group.title}</span>
-                  <span className="group-type">
-                    {group.type === 'chatTypeBasicGroup' ? 'Group' : 'Supergroup'}
-                  </span>
-                </div>
-                <FaCheck className="select-icon" />
-              </li>
-            ))}
-          </ul>
+          <>
+            <p className="groups-count">{filteredGroups.length} groups found</p>
+            <ul className="group-list">
+              {filteredGroups.map((group) => (
+                <li 
+                  key={group.id} 
+                  className={`group-item ${selectedGroup === group.id ? 'selected' : ''}`}
+                  onClick={() => handleChatSelect(group.id, group.title)}
+                  aria-selected={selectedGroup === group.id}
+                >
+                  <div className="group-avatar">
+                    {group.title.charAt(0).toUpperCase()}
+                  </div>
+                  <div className="group-info">
+                    <span className="group-title">{group.title}</span>
+                    <span className="group-type">
+                      {group.type === 'chatTypeBasicGroup' ? 'Group' : 'Supergroup'}
+                      {group.memberCount > 0 && ` · ${group.memberCount} members`}
+                    </span>
+                  </div>
+                  {selectedGroup === group.id && (
+                    <FaCheck className="select-icon" aria-hidden="true" />
+                  )}
+                </li>
+              ))}
+            </ul>
+          </>
         )}
       </div>
     </div>
