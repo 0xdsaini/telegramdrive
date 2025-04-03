@@ -98,7 +98,13 @@
 
 .chat-title {
   font-weight: 500;
-  color: #333;
+}
+
+.help-text {
+  font-size: 12px;
+  font-style: italic;
+  color: #666;
+  margin-top: 5px;
 }
 
 .chat-type {
@@ -110,11 +116,19 @@
 }
 
 .selected-chat-info {
-  margin-top: 15px;
-  padding: 10px;
-  background-color: #e6f7ff;
-  border-radius: 4px;
-  font-size: 14px;
-  color: #1890ff;
+  margin-top: 10px;
+  padding: 15px;
+  background-color: #f0f0f0;
+  border-radius: 5px;
   text-align: center;
+}
+
+.selected-chat-info strong {
+  color: #0088cc;
+}
+
+.help-text {
+  font-size: 0.85em;
+  color: #666;
+  margin-top: 5px;
 }

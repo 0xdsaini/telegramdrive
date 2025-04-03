@@ -117,9 +117,13 @@ const TelegramMessenger = () => {
           try {
             // Try to get a specific chat first
             try {
+              // Try to get the selected chat if available, otherwise this will fail and we'll try getChats instead
+              if (!selectedChatId) {
+                throw new Error('No chat selected');
+              }
               const response = await clientRef.current.send({
                 "@type": "getChat",
-                "chat_id": CHAT_ID
+                "chat_id": selectedChatId
               });
               console.log("getChat succeeded:", response);
               setIsConnected(true);
@@ -486,6 +490,8 @@ const TelegramMessenger = () => {
         throw new Error('No chat selected. Please select a chat group first.');
       }
       
+      console.log('Updating file structure in chat ID:', selectedChatId);
+      
       if (messageId) {
         await editMessage(messageText, messageId, selectedChatId);
       } else {
@@ -509,9 +515,9 @@ const TelegramMessenger = () => {
   useEffect(() => {
     // Add a method to the window object that the FileExplorer can call
     window.updateTelegramFileStructure = updateFileStructure;
-  }, [messageId]);
-
-  // Send a new message to Telegram
+   }, [messageId, selectedChatId]);
+  
+    // Send a new message to Telegram
   const sendMessage = async (newMessage, chat_id) => {
     console.log("Sending new message to chat ID:", chat_id);
 

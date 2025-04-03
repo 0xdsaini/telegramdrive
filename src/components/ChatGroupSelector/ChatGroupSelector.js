@@ -11,16 +11,17 @@ const ChatGroupSelector = () => {
     telegramClient, 
     isConnected, 
     selectedChatId,
+    selectedChatName,
     setSelectedChatId,
     logout
   } = useContext(TelegramContext);
 
-  // Fetch available chat groups when connected
+  // Fetch available chat groups when connected and no group is selected
   useEffect(() => {
-    if (isConnected && telegramClient) {
+    if (isConnected && telegramClient && !selectedChatId) {
       fetchChatGroups();
     }
-  }, [isConnected, telegramClient]);
+  }, [isConnected, telegramClient, selectedChatId]);
 
   const fetchChatGroups = async () => {
     setIsLoading(true);
@@ -74,8 +75,8 @@ const ChatGroupSelector = () => {
     }
   };
 
-  const handleChatSelect = (chatId) => {
-    setSelectedChatId(chatId);
+  const handleChatSelect = (chatId, chatName) => {
+    setSelectedChatId(chatId, chatName);
   };
 
   const handleLogout = () => {
@@ -89,16 +90,18 @@ const ChatGroupSelector = () => {
   return (
     <div className="chat-group-selector">
       <div className="selector-header">
-        <h3>Select Chat Group</h3>
+        <h3>{selectedChatId && selectedChatName ? 'Selected Group' : 'Select Chat Group'}</h3>
         <div className="selector-actions">
-          <button 
-            className="refresh-button" 
-            onClick={handleRefresh} 
-            disabled={!isConnected || isLoading}
-            title="Refresh chat list"
-          >
-            ↻
-          </button>
+          {!selectedChatId && (
+            <button 
+              className="refresh-button" 
+              onClick={handleRefresh} 
+              disabled={!isConnected || isLoading}
+              title="Refresh chat list"
+            >
+              ↻
+            </button>
+          )}
           <button 
             className="logout-button" 
             onClick={handleLogout}
@@ -109,7 +112,12 @@ const ChatGroupSelector = () => {
         </div>
       </div>
       
-      {isLoading ? (
+      {selectedChatId && selectedChatName ? (
+        <div className="selected-chat-info">
+          <p>Group has been selected: <strong>{selectedChatName}</strong></p>
+          <p className="help-text">You can change the group after logging out and logging back in.</p>
+        </div>
+      ) : isLoading ? (
         <div className="loading-message">Loading chat groups...</div>
       ) : error ? (
         <div className="error-message">{error}</div>
@@ -121,19 +129,13 @@ const ChatGroupSelector = () => {
             <li 
               key={chat.id} 
               className={`chat-item ${selectedChatId === chat.id ? 'selected' : ''}`}
-              onClick={() => handleChatSelect(chat.id)}
+              onClick={() => handleChatSelect(chat.id, chat.title)}
             >
               <span className="chat-title">{chat.title}</span>
               <span className="chat-type">{chat.type.replace('chatType', '')}</span>
             </li>
           ))}
         </ul>
-      )}
-      
-      {selectedChatId && (
-        <div className="selected-chat-info">
-          <p>Selected: {chatGroups.find(c => c.id === selectedChatId)?.title || selectedChatId}</p>
-        </div>
       )}
     </div>
   );

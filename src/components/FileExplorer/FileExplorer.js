@@ -107,6 +107,11 @@ const FileExplorer = () => {
         return;
       }
       
+      if (!selectedChatId) {
+        setError('No chat group selected. Please select a chat group first.');
+        return;
+      }
+      
       // Validate folder name
       if (!folderName || folderName.includes('/')) {
         setError('Invalid folder name. Folder name cannot be empty or contain "/"');
@@ -469,6 +474,11 @@ const FileExplorer = () => {
         return;
       }
       
+      if (!selectedChatId) {
+        setError('No chat group selected. Please select a chat group first.');
+        return;
+      }
+      
       // Check if the updateTelegramFileStructure function is available
       if (!window.updateTelegramFileStructure || typeof window.updateTelegramFileStructure !== 'function') {
         console.error('updateTelegramFileStructure function is not available');
@@ -599,8 +609,7 @@ const FileExplorer = () => {
     handleFiles(selectedFiles);
   };
   
-  // Base URL for API endpoints
-  const API_BASE_URL = 'https://ee44-192-140-152-195.ngrok-free.app';
+  // No external API is needed, we're using the Telegram client directly with selectedChatId
 
   const handleDeleteFile = async (fileName, e) => {
     e.stopPropagation(); // Prevent any parent click events
@@ -612,6 +621,11 @@ const FileExplorer = () => {
     try {
       if (!isConnected || !telegramClient) {
         setError('Not connected to Telegram. Please authenticate first.');
+        return;
+      }
+      
+      if (!selectedChatId) {
+        setError('No chat group selected. Please select a chat group first.');
         return;
       }
       
@@ -675,6 +689,11 @@ const FileExplorer = () => {
     try {
       if (!isConnected || !telegramClient) {
         setError('Not connected to Telegram. Please authenticate first.');
+        return;
+      }
+      
+      if (!selectedChatId) {
+        setError('No chat group selected. Please select a chat group first.');
         return;
       }
       

@@ -1,6 +1,10 @@
 import React, { createContext, useState, useEffect, useContext } from 'react';
 import { createEmptyFileStructure } from '../utils/fileStructureUtils';
 
+// Constants for localStorage keys
+const SELECTED_CHAT_KEY = 'telegram-selected-chat';
+const SELECTED_CHAT_NAME_KEY = 'telegram-selected-chat-name';
+
 // Create the context
 export const TelegramContext = createContext();
 
@@ -19,7 +23,15 @@ export const TelegramProvider = ({ children }) => {
   const [messageId, setMessageId] = useState(null);
   
   // Chat selection state
-  const [selectedChatId, setSelectedChatId] = useState(null);
+  const [selectedChatId, setSelectedChatId] = useState(() => {
+    // Try to load the selected chat ID from localStorage
+    const savedChatId = localStorage.getItem(SELECTED_CHAT_KEY);
+    return savedChatId ? parseInt(savedChatId, 10) : null;
+  });
+  const [selectedChatName, setSelectedChatName] = useState(() => {
+    // Try to load the selected chat name from localStorage
+    return localStorage.getItem(SELECTED_CHAT_NAME_KEY) || null;
+  });
   const [availableChats, setAvailableChats] = useState([]);
   
   // Function to update file structure
@@ -30,6 +42,24 @@ export const TelegramProvider = ({ children }) => {
     return true;
   };
   
+  // Function to save selected chat to localStorage
+  const saveSelectedChat = (chatId, chatName) => {
+    if (chatId && chatName) {
+      localStorage.setItem(SELECTED_CHAT_KEY, chatId.toString());
+      localStorage.setItem(SELECTED_CHAT_NAME_KEY, chatName);
+      console.log(`Saved selected chat: ${chatName} (${chatId}) to localStorage`);
+    }
+  };
+
+  // Custom setter for selectedChatId that also updates localStorage
+  const updateSelectedChatId = (chatId, chatName) => {
+    setSelectedChatId(chatId);
+    if (chatName) {
+      setSelectedChatName(chatName);
+    }
+    saveSelectedChat(chatId, chatName);
+  };
+
   // Function to handle logout
   const logout = async () => {
     try {
@@ -45,7 +75,12 @@ export const TelegramProvider = ({ children }) => {
       setIsConnected(false);
       setMessageId(null);
       setSelectedChatId(null);
+      setSelectedChatName(null);
       setAvailableChats([]);
+      
+      // Clear selected chat from localStorage
+      localStorage.removeItem(SELECTED_CHAT_KEY);
+      localStorage.removeItem(SELECTED_CHAT_NAME_KEY);
       
       // Clear any downloaded files from storage
       clearDownloadedFiles();
@@ -116,7 +151,9 @@ export const TelegramProvider = ({ children }) => {
     setMessageId,
     updateFileStructure,
     selectedChatId,
-    setSelectedChatId,
+    setSelectedChatId: updateSelectedChatId,
+    selectedChatName,
+    setSelectedChatName,
     availableChats,
     setAvailableChats,
     logout,
