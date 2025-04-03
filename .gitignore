@@ -21,3 +21,10 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# --- User added (start) ---
+
+src/for_inspiration/
+telegram-tt/
+
+# --- User added (end)
