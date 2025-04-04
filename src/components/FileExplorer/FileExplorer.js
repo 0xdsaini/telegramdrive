@@ -119,6 +119,7 @@ const FileExplorer = () => {
         return;
       }
       
+      setSuccess("Creating folder...Updating Telegram Servers...");
       // Create folder in the file structure
       const updatedStructure = createFolder(fileStructure, currentPath, folderName);
       
