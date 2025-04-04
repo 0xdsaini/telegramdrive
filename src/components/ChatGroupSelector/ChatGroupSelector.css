@@ -36,42 +36,61 @@
   display: flex;
   align-items: center;
   padding: 15px 20px;
-  background-color: #005a87;
+  background: linear-gradient(135deg, #006da3 0%, #004a70 100%);
+  background-size: 200% 200%;
+  animation: gradientAnimation 15s ease infinite;
   border-bottom: 1px solid #004a70;
   position: relative;
   color: white;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
 }
 
 @media (min-width: 768px) {
   .group-selector-header {
     padding: 20px 30px;
     height: 80px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
   }
 }
 
 .header-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 48px;
-  height: 48px;
-  background-color: #ffffff;
-  border-radius: 50%;
-  margin-right: 18px;
-  color: white;
-  font-size: 24px;
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
-  position: relative;
-  overflow: visible;
-  padding: 6px;
+  display: none; /* Hide the problematic icon */
 }
 
-.gramsafe-logo {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  padding: 0;
-  display: block;
+.group-selector-header h2 {
+  position: relative;
+  padding-left: 0;
+  display: flex;
+  align-items: center;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.group-selector-header h2::before {
+  content: '';
+  display: inline-block;
+  width: 28px;
+  height: 28px;
+  margin-right: 12px;
+  background-image: url('./GramSafeLogo.svg');
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  filter: brightness(0) invert(1); /* Make SVG white */
+  transition: transform 0.3s ease;
+}
+
+.group-selector-header h2:hover::before {
+  transform: scale(1.1);
+}
+
+@keyframes gradientAnimation {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
 }
 
 .group-selector-header h2 {
@@ -387,6 +406,9 @@
     height: 60px;
     box-sizing: border-box;
     flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
   }
   
   .group-selector-content {
