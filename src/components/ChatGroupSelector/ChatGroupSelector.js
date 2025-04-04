@@ -214,9 +214,16 @@ const ChatGroupSelector = ({ onBack }) => {
       </div>
       
       {selectedGroup && (
-        <div className="group-selector-footer">
+        <div style={{ 
+          position: 'fixed', 
+          bottom: '20px', 
+          right: '20px',
+          zIndex: 100,
+          pointerEvents: 'none' /* This ensures the div doesn't interfere with scrolling */
+        }}>
           <button 
             className="continue-button"
+            style={{ pointerEvents: 'auto' }} /* Re-enable pointer events just for the button */
             onClick={() => {
               // The setSelectedChatId function already saves to localStorage
               // Just confirm the selection here
