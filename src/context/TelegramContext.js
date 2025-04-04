@@ -21,7 +21,7 @@ export const TelegramProvider = ({ children }) => {
   const [telegramClient, setTelegramClient] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
   const [messageId, setMessageId] = useState(null);
-  
+
   // Chat selection state
   const [selectedChatId, setSelectedChatId] = useState(() => {
     // Try to load the selected chat ID from localStorage
@@ -84,15 +84,36 @@ export const TelegramProvider = ({ children }) => {
       // Clear message ID from localStorage
       localStorage.removeItem('telegram-metadata-message-id'); //NOTICE: This is problematic. hardcoding should not be there.
       
+      // delete all files from the file system
+      deleteAllDatabases();
       // Clear any downloaded files from storage
-      clearDownloadedFiles();
-      
+      // clearDownloadedFiles();
       console.log('Logged out successfully');
     } catch (error) {
       console.error('Error during logout:', error);
     }
   };
-  
+  const deleteAllDatabases = () => {
+    if (window.indexedDB) {
+      try {
+        const dbNames = ['/tdlib', '/tdlib/dbfs',
+                         'tdlib', 'tdlib/dbfs', // These ones gets created sometimes, making sure we delete them also.
+        ]; // These are the two crucial databases that TDLib uses as we've defined in setTdlibparameters somewhere at start. NOTICE though: hardcoding is made here.
+
+        dbNames.forEach(dbName => {
+          const request = window.indexedDB.deleteDatabase(dbName);
+          request.onsuccess = () => {
+            console.log(`Database ${dbName} successfully deleted`);
+          };
+          request.onerror = () => {
+            console.error(`Error deleting database ${dbName}`);
+          };
+        });
+      } catch (error) {
+        console.error('Error deleting databases:', error);
+      }
+    }
+  }
   // Function to clear downloaded files
   const clearDownloadedFiles = () => {
     // Clear IndexedDB storage

@@ -417,10 +417,11 @@ const TelegramMessenger = () => {
                   setStatus('Connected to Telegram');
                   setIsConnected(true);
                   setContextIsConnected(true);
-                  setContextIsConnected(true);
                   setAuthState('ready');
                   
                   // Initialize data and find message ID after a short delay
+                  // TODO: We need to remove all the timeout things, rather find
+                  // better solutions to chaining these things in deterministic fashion.
                   setTimeout(() => {
                     initializeData();
                     findMessageId();
@@ -456,19 +457,20 @@ const TelegramMessenger = () => {
       }
     };
     
-    // Initialize Telegram with a small delay to ensure the script is loaded
-    console.log("Setting timeout for TDLib initialization...");
-    const timeoutId = setTimeout(initTelegram, 1000);
+    // // Initialize Telegram with a small delay to ensure the script is loaded
+    // console.log("Setting timeout for TDLib initialization...");
+    // const timeoutId = setTimeout(initTelegram, 1000);
+    initTelegram(); // NOTICE: We changed this in this to run without timeout, if anything errorneous happens, you may need to set it back to timeout again
 
     // Cleanup function
     return () => {
       console.log("Cleaning up TDLib resources...");
-      clearTimeout(timeoutId);
+      // clearTimeout(timeoutId); // NOTICE: this was commented along with above initTelegram's moving from timeout to normal initTelegram. If you want to use timeout, you may need to set it back to clearTimeout again. I don't really know what it does, but it's there.
       if (clientRef.current) {
         clientRef.current.close();
       }
     };
-  }, [findMessageId]);
+  }, []); // NOTICE: we're removing this here in this commit, later if something breaks, you may need to re-set it to this. Currently, I don't think this was placed rightly.
 
 
   const handleMessageChange = (e) => {
