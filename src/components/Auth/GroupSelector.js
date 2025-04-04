@@ -1,214 +1,223 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { TelegramContext } from '../../context/TelegramContext';
-import { FaUsers, FaSearch, FaArrowLeft, FaCheck, FaSync, FaTimes, FaUserFriends } from 'react-icons/fa';
+import { FaTelegram, FaSearch, FaArrowLeft, FaCheck } from 'react-icons/fa';
 import './Auth.css';
 
 const GroupSelector = ({ onBack }) => {
-  const [chatGroups, setChatGroups] = useState([]);
+  // States for group selection
+  const [groups, setGroups] = useState([]);
   const [filteredGroups, setFilteredGroups] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedGroup, setSelectedGroup] = useState(null);
   
+  // Access the Telegram context
   const { 
     telegramClient, 
-    isConnected,
-    setSelectedChatId
+    setSelectedChatId,
+    selectedChatId,
+    availableChats,
+    setAvailableChats
   } = useContext(TelegramContext);
 
-  // Fetch available chat groups when component mounts
+  // Fetch available chats when component mounts
   useEffect(() => {
-    if (isConnected && telegramClient) {
-      fetchChatGroups();
-    }
-  }, [isConnected, telegramClient]);
-
-  // Filter groups when search query changes
-  useEffect(() => {
-    if (searchQuery.trim() === '') {
-      setFilteredGroups(chatGroups);
-    } else {
-      const query = searchQuery.toLowerCase();
-      const filtered = chatGroups.filter(group => 
-        group.title.toLowerCase().includes(query)
-      );
-      setFilteredGroups(filtered);
-    }
-  }, [searchQuery, chatGroups]);
-
-  const fetchChatGroups = async () => {
-    setIsLoading(true);
-    setError(null);
-    
-    try {
-      // Fetch chats from Telegram
-      const result = await telegramClient.send({
-        '@type': 'getChats',
-        'limit': 100 // Limit to 100 chats for performance
-      });
-      
-      if (result && result.chat_ids && result.chat_ids.length > 0) {
-        // Fetch details for each chat
-        const chatDetails = await Promise.all(
-          result.chat_ids.map(async (chatId) => {
-            try {
-              const chatInfo = await telegramClient.send({
-                '@type': 'getChat',
-                'chat_id': chatId
-              });
-              
-              // Only include groups and supergroups
-              const type = chatInfo.type['@type'];
-              if (type === 'chatTypeBasicGroup' || type === 'chatTypeSupergroup') {
-                return {
-                  id: chatId,
-                  title: chatInfo.title || `Chat ${chatId}`,
-                  type: type,
-                  memberCount: chatInfo.member_count || 0,
-                  photo: chatInfo.photo ? chatInfo.photo.small : null
-                };
-              }
-              return null;
-            } catch (error) {
-              console.error(`Error fetching details for chat ${chatId}:`, error);
-              return null;
-            }
-          })
-        );
-        
-        // Filter out null values and sort by title
-        const validChats = chatDetails
-          .filter(chat => chat !== null)
-          .sort((a, b) => a.title.localeCompare(b.title));
-        
-        setChatGroups(validChats);
-        setFilteredGroups(validChats);
-      } else {
-        setChatGroups([]);
-        setFilteredGroups([]);
-        setError('No chat groups found');
+    const fetchChats = async () => {
+      if (!telegramClient) {
+        setError('Telegram client not initialized');
+        setIsLoading(false);
+        return;
       }
-    } catch (error) {
-      console.error('Error fetching chat groups:', error);
-      setError(`Failed to fetch chat groups: ${error.message || 'Unknown error'}`);
-      setChatGroups([]);
-      setFilteredGroups([]);
-    } finally {
-      setIsLoading(false);
-    }
-  };
 
-  const handleChatSelect = (chatId, chatName) => {
-    // First update the local state to show visual feedback
-    setSelectedGroup(chatId);
-    
-    // Then update the context after a short delay to allow for visual feedback
-    setTimeout(() => {
-      setSelectedChatId(chatId, chatName);
-    }, 300);
-  };
+      try {
+        setIsLoading(true);
+        setError(null);
 
+        // Check if we already have chats in context
+        if (availableChats && availableChats.length > 0) {
+          setGroups(availableChats);
+          setFilteredGroups(availableChats);
+          setIsLoading(false);
+          return;
+        }
+
+        // Fetch chats from Telegram
+        const result = await telegramClient.send({
+          "@type": "getChats",
+          "limit": 100
+        });
+
+        if (result && result.chat_ids) {
+          // Fetch details for each chat
+          const chatDetails = await Promise.all(
+            result.chat_ids.map(async (chatId) => {
+              try {
+                const chatInfo = await telegramClient.send({
+                  "@type": "getChat",
+                  "chat_id": chatId
+                });
+                return chatInfo;
+              } catch (error) {
+                console.error(`Error fetching details for chat ${chatId}:`, error);
+                return null;
+              }
+            })
+          );
+
+          // Filter out null results and non-group chats
+          const validGroups = chatDetails.filter(chat => 
+            chat && 
+            (chat.type['@type'] === 'chatTypeSupergroup' || 
+             chat.type['@type'] === 'chatTypeBasicGroup')
+          );
+
+          setGroups(validGroups);
+          setFilteredGroups(validGroups);
+          setAvailableChats(validGroups); // Save to context for future use
+        } else {
+          setError('No chats found');
+        }
+      } catch (error) {
+        console.error('Error fetching chats:', error);
+        setError(error.message || 'Failed to fetch chats');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchChats();
+  }, [telegramClient, setAvailableChats, availableChats]);
+
+  // Handle search input change
   const handleSearchChange = (e) => {
-    setSearchQuery(e.target.value);
+    const query = e.target.value.toLowerCase();
+    setSearchQuery(query);
+    
+    if (!query.trim()) {
+      setFilteredGroups(groups);
+      return;
+    }
+    
+    const filtered = groups.filter(group => 
+      group.title.toLowerCase().includes(query)
+    );
+    setFilteredGroups(filtered);
   };
 
-  const handleRefresh = () => {
-    fetchChatGroups();
+  // Handle group selection
+  const handleGroupSelect = (group) => {
+    setSelectedGroup(group);
+    setSelectedChatId(group.id, group.title);
   };
 
-  return (
-    <div className="group-selector-container">
-      <div className="group-selector-header">
-        <button className="back-button" onClick={onBack} aria-label="Go back">
-          <FaArrowLeft />
-        </button>
-        <h2>Select a Group</h2>
-        <button 
-          className="refresh-button" 
-          onClick={handleRefresh} 
-          disabled={isLoading}
-          aria-label="Refresh groups"
-        >
-          <FaSync className={isLoading ? 'spin' : ''} />
-        </button>
-      </div>
-      
-      <div className="search-container">
-        <FaSearch className="search-icon" />
-        <input
-          type="text"
-          placeholder="Search groups..."
-          value={searchQuery}
-          onChange={handleSearchChange}
-          className="search-input"
-          aria-label="Search groups"
-        />
-        {searchQuery && (
-          <button 
-            className="clear-search-button" 
-            onClick={() => setSearchQuery('')}
-            aria-label="Clear search"
+  // Render loading state
+  const renderLoading = () => (
+    <div className="group-selector-loading">
+      <div className="loading-spinner"></div>
+      <p>Loading available groups...</p>
+    </div>
+  );
+
+  // Render error state
+  const renderError = () => (
+    <div className="group-selector-error">
+      <p>{error}</p>
+      <button onClick={() => window.location.reload()} className="retry-button">
+        Retry
+      </button>
+    </div>
+  );
+
+  // Render empty state
+  const renderEmpty = () => (
+    <div className="group-selector-empty">
+      <p>No groups found. Please create a group in Telegram first.</p>
+    </div>
+  );
+
+  // Render group list
+  const renderGroupList = () => (
+    <div className="group-list">
+      {filteredGroups.length === 0 ? (
+        <div className="no-results">No groups match your search</div>
+      ) : (
+        filteredGroups.map(group => (
+          <div 
+            key={group.id} 
+            className={`group-item ${selectedGroup && selectedGroup.id === group.id ? 'selected' : ''}`}
+            onClick={() => handleGroupSelect(group)}
           >
-            <FaTimes />
-          </button>
-        )}
-      </div>
-      
-      <div className="groups-container">
-        {isLoading ? (
-          <div className="loading-container">
-            <div className="loading-spinner"></div>
-            <p>Loading groups...</p>
-          </div>
-        ) : error ? (
-          <div className="error-container">
-            <FaUsers className="error-icon" />
-            <p>{error}</p>
-            <button className="retry-button" onClick={handleRefresh}>
-              Try Again
-            </button>
-          </div>
-        ) : filteredGroups.length === 0 ? (
-          <div className="empty-container">
-            <FaUserFriends className="empty-icon" />
-            <p>{searchQuery ? 'No matching groups found' : 'No groups available'}</p>
-            {searchQuery && (
-              <button className="clear-search" onClick={() => setSearchQuery('')}>
-                Clear Search
-              </button>
+            <div className="group-avatar">
+              {group.title.charAt(0).toUpperCase()}
+            </div>
+            <div className="group-info">
+              <div className="group-title">{group.title}</div>
+              <div className="group-type">
+                {group.type['@type'] === 'chatTypeSupergroup' ? 'Supergroup' : 'Group'}
+              </div>
+            </div>
+            {selectedGroup && selectedGroup.id === group.id && (
+              <div className="group-selected">
+                <FaCheck />
+              </div>
             )}
           </div>
-        ) : (
-          <>
-            <p className="groups-count">{filteredGroups.length} groups found</p>
-            <ul className="group-list">
-              {filteredGroups.map((group) => (
-                <li 
-                  key={group.id} 
-                  className={`group-item ${selectedGroup === group.id ? 'selected' : ''}`}
-                  onClick={() => handleChatSelect(group.id, group.title)}
-                  aria-selected={selectedGroup === group.id}
-                >
-                  <div className="group-avatar">
-                    {group.title.charAt(0).toUpperCase()}
-                  </div>
-                  <div className="group-info">
-                    <span className="group-title">{group.title}</span>
-                    <span className="group-type">
-                      {group.type === 'chatTypeBasicGroup' ? 'Group' : 'Supergroup'}
-                      {group.memberCount > 0 && ` · ${group.memberCount} members`}
-                    </span>
-                  </div>
-                  {selectedGroup === group.id && (
-                    <FaCheck className="select-icon" aria-hidden="true" />
-                  )}
-                </li>
-              ))}
-            </ul>
-          </>
+        ))
+      )}
+    </div>
+  );
+
+  return (
+    <div className="chat-group-selector">
+      <div className="group-selector-header">
+        {onBack && (
+          <button className="back-button" onClick={onBack}>
+            <FaArrowLeft />
+          </button>
         )}
+        <div className="header-icon">
+          <FaTelegram />
+        </div>
+        <h2>Select a Group</h2>
       </div>
+      
+      <div className="group-selector-content">
+        <p className="instruction-text">
+          Select a Telegram group where your files will be stored.
+        </p>
+        
+        <div className="search-container">
+          <FaSearch className="search-icon" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={handleSearchChange}
+            placeholder="Search groups..."
+            className="search-input"
+          />
+        </div>
+        
+        {isLoading ? renderLoading() : 
+         error ? renderError() : 
+         groups.length === 0 ? renderEmpty() : 
+         renderGroupList()}
+      </div>
+      
+      {selectedGroup && (
+        <div className="group-selector-footer">
+          <button 
+            className="continue-button"
+            onClick={() => {
+              // The setSelectedChatId function already saves to localStorage
+              // Just confirm the selection here
+              console.log(`Group selected: ${selectedGroup.title} (${selectedGroup.id})`);
+            }}
+          >
+            Continue with {selectedGroup.title}
+          </button>
+        </div>
+      )}
     </div>
   );
 };

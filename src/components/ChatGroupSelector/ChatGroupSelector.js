@@ -1,193 +1,222 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { TelegramContext } from '../../context/TelegramContext';
-import { FaUsers, FaSignOutAlt, FaSyncAlt, FaSearch, FaCheck } from 'react-icons/fa';
+import { FaTelegram, FaSearch, FaArrowLeft, FaCheck } from 'react-icons/fa';
 import './ChatGroupSelector.css';
 
-const ChatGroupSelector = () => {
-  const [chatGroups, setChatGroups] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
+const ChatGroupSelector = ({ onBack }) => {
+  // States for group selection
+  const [groups, setGroups] = useState([]);
+  const [filteredGroups, setFilteredGroups] = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [selectedGroup, setSelectedGroup] = useState(null);
   
+  // Access the Telegram context
   const { 
     telegramClient, 
-    isConnected, 
-    selectedChatId,
-    selectedChatName,
     setSelectedChatId,
-    logout
+    selectedChatId,
+    availableChats,
+    setAvailableChats
   } = useContext(TelegramContext);
 
-  // Fetch available chat groups when connected and no group is selected
+  // Fetch available chats when component mounts
   useEffect(() => {
-    if (isConnected && telegramClient && !selectedChatId) {
-      fetchChatGroups();
-    }
-  }, [isConnected, telegramClient, selectedChatId]);
-
-  const fetchChatGroups = async () => {
-    setIsLoading(true);
-    setError(null);
-    
-    try {
-      // Fetch chats from Telegram
-      const result = await telegramClient.send({
-        '@type': 'getChats',
-        'limit': 100 // Limit to 100 chats for performance
-      });
-      
-      if (result && result.chat_ids && result.chat_ids.length > 0) {
-        // Fetch details for each chat
-        const chatDetails = await Promise.all(
-          result.chat_ids.map(async (chatId) => {
-            try {
-              const chatInfo = await telegramClient.send({
-                '@type': 'getChat',
-                'chat_id': chatId
-              });
-              
-              return {
-                id: chatId,
-                title: chatInfo.title || `Chat ${chatId}`,
-                type: chatInfo.type['@type'] || 'unknown'
-              };
-            } catch (error) {
-              console.error(`Error fetching details for chat ${chatId}:`, error);
-              return null;
-            }
-          })
-        );
-        
-        // Filter out null values and sort by title
-        const validChats = chatDetails
-          .filter(chat => chat !== null)
-          .sort((a, b) => a.title.localeCompare(b.title));
-        
-        setChatGroups(validChats);
-      } else {
-        setChatGroups([]);
-        setError('No chat groups found');
+    const fetchChats = async () => {
+      if (!telegramClient) {
+        setError('Telegram client not initialized');
+        setIsLoading(false);
+        return;
       }
-    } catch (error) {
-      console.error('Error fetching chat groups:', error);
-      setError(`Failed to fetch chat groups: ${error.message || 'Unknown error'}`);
-      setChatGroups([]);
-    } finally {
-      setIsLoading(false);
+
+      try {
+        setIsLoading(true);
+        setError(null);
+
+        // Check if we already have chats in context
+        if (availableChats && availableChats.length > 0) {
+          setGroups(availableChats);
+          setFilteredGroups(availableChats);
+          setIsLoading(false);
+          return;
+        }
+
+        // Fetch chats from Telegram
+        const result = await telegramClient.send({
+          "@type": "getChats",
+          "limit": 100
+        });
+
+        if (result && result.chat_ids) {
+          // Fetch details for each chat
+          const chatDetails = await Promise.all(
+            result.chat_ids.map(async (chatId) => {
+              try {
+                const chatInfo = await telegramClient.send({
+                  "@type": "getChat",
+                  "chat_id": chatId
+                });
+                return chatInfo;
+              } catch (error) {
+                console.error(`Error fetching details for chat ${chatId}:`, error);
+                return null;
+              }
+            })
+          );
+
+          // Filter out null results and non-group chats
+          const validGroups = chatDetails.filter(chat => 
+            chat && 
+            (chat.type['@type'] === 'chatTypeSupergroup' || 
+             chat.type['@type'] === 'chatTypeBasicGroup')
+          );
+
+          setGroups(validGroups);
+          setFilteredGroups(validGroups);
+          setAvailableChats(validGroups); // Save to context for future use
+        } else {
+          setError('No chats found');
+        }
+      } catch (error) {
+        console.error('Error fetching chats:', error);
+        setError(error.message || 'Failed to fetch chats');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchChats();
+  }, [telegramClient, setAvailableChats, availableChats]);
+
+  // Handle search input change
+  const handleSearchChange = (e) => {
+    const query = e.target.value.toLowerCase();
+    setSearchQuery(query);
+    
+    if (!query.trim()) {
+      setFilteredGroups(groups);
+      return;
     }
+    
+    const filtered = groups.filter(group => 
+      group.title.toLowerCase().includes(query)
+    );
+    setFilteredGroups(filtered);
   };
 
-  const handleChatSelect = (chatId, chatName) => {
-    setSelectedChatId(chatId, chatName);
+  // Handle group selection
+  const handleGroupSelect = (group) => {
+    setSelectedGroup(group);
+    setSelectedChatId(group.id, group.title);
   };
 
-  const handleLogout = () => {
-    logout();
-  };
+  // Render loading state
+  const renderLoading = () => (
+    <div className="group-selector-loading">
+      <div className="loading-spinner"></div>
+      <p>Loading available groups...</p>
+    </div>
+  );
 
-  const handleRefresh = () => {
-    fetchChatGroups();
-  };
+  // Render error state
+  const renderError = () => (
+    <div className="group-selector-error">
+      <p>{error}</p>
+      <button onClick={() => window.location.reload()} className="retry-button">
+        Retry
+      </button>
+    </div>
+  );
+
+  // Render empty state
+  const renderEmpty = () => (
+    <div className="group-selector-empty">
+      <p>No groups found. Please create a group in Telegram first.</p>
+    </div>
+  );
+
+  // Render group list
+  const renderGroupList = () => (
+    <div className="group-list">
+      {filteredGroups.length === 0 ? (
+        <div className="no-results">No groups match your search</div>
+      ) : (
+        filteredGroups.map(group => (
+          <div 
+            key={group.id} 
+            className={`group-item ${selectedGroup && selectedGroup.id === group.id ? 'selected' : ''}`}
+            onClick={() => handleGroupSelect(group)}
+          >
+            <div className="group-avatar">
+              {group.title.charAt(0).toUpperCase()}
+            </div>
+            <div className="group-info">
+              <div className="group-title">{group.title}</div>
+              <div className="group-type">
+                {group.type['@type'] === 'chatTypeSupergroup' ? 'Supergroup' : 'Group'}
+              </div>
+            </div>
+            {selectedGroup && selectedGroup.id === group.id && (
+              <div className="group-selected">
+                <FaCheck />
+              </div>
+            )}
+          </div>
+        ))
+      )}
+    </div>
+  );
 
   return (
     <div className="chat-group-selector">
-      <div className="selector-header">
-        <h3>
-          {selectedChatId && selectedChatName ? (
-            <>
-              <FaUsers style={{ marginRight: '8px' }} /> Selected Group
-            </>
-          ) : (
-            <>
-              <FaUsers style={{ marginRight: '8px' }} /> Select Chat Group
-            </>
-          )}
-        </h3>
-        <div className="selector-actions">
-          {!selectedChatId && (
-            <button 
-              className="refresh-button" 
-              onClick={handleRefresh} 
-              disabled={!isConnected || isLoading}
-              title="Refresh chat list"
-            >
-              <FaSyncAlt /> Refresh
-            </button>
-          )}
-          <button 
-            className="logout-button" 
-            onClick={handleLogout}
-            title="Logout"
-          >
-            <FaSignOutAlt /> Logout
+      <div className="group-selector-header">
+        {onBack && (
+          <button className="back-button" onClick={onBack}>
+            <FaArrowLeft />
           </button>
+        )}
+        <div className="header-icon">
+          <FaTelegram />
         </div>
+        <h2>Select a Group</h2>
       </div>
       
-      {!selectedChatId && !isLoading && !error && chatGroups.length > 0 && (
+      <div className="group-selector-content">
+        <p className="instruction-text">
+          Select a Telegram group where your files will be stored.
+        </p>
+        
         <div className="search-container">
-          <FaSearch style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#6c757d' }} />
+          <FaSearch className="search-icon" />
           <input
             type="text"
+            value={searchQuery}
+            onChange={handleSearchChange}
+            placeholder="Search groups..."
             className="search-input"
-            placeholder="Search chat groups..."
-            onChange={(e) => {
-              const query = e.target.value.toLowerCase();
-              const filtered = chatGroups.filter(chat => 
-                chat.title.toLowerCase().includes(query)
-              );
-              setChatGroups(filtered.length > 0 ? filtered : chatGroups);
-            }}
           />
         </div>
-      )}
+        
+        {isLoading ? renderLoading() : 
+         error ? renderError() : 
+         groups.length === 0 ? renderEmpty() : 
+         renderGroupList()}
+      </div>
       
-      {selectedChatId && selectedChatName ? (
-        <div className="selected-chat-info">
-          <FaCheck style={{ fontSize: '20px', color: '#0088cc', marginBottom: '8px' }} />
-          <p>Group has been selected: <strong>{selectedChatName}</strong></p>
-          <p className="help-text">You can change the group after logging out and logging back in.</p>
-        </div>
-      ) : isLoading ? (
-        <div className="loading-message">
-          <div className="loading-spinner"></div>
-          <p>Loading chat groups...</p>
-        </div>
-      ) : error ? (
-        <div className="error-message">
-          <p>{error}</p>
-          <button className="refresh-button" onClick={handleRefresh}>
-            <FaSyncAlt /> Try Again
+      {selectedGroup && (
+        <div className="group-selector-footer">
+          <button 
+            className="continue-button"
+            onClick={() => {
+              // The setSelectedChatId function already saves to localStorage
+              // Just confirm the selection here
+              console.log(`Group selected: ${selectedGroup.title} (${selectedGroup.id})`);
+            }}
+          >
+            Continue with {selectedGroup.title}
           </button>
         </div>
-      ) : chatGroups.length === 0 ? (
-        <div className="empty-message">
-          <FaUsers style={{ fontSize: '28px', opacity: '0.6' }} />
-          <p>No chat groups available</p>
-          <button className="refresh-button" onClick={handleRefresh}>
-            <FaSyncAlt /> Try Again
-          </button>
-        </div>
-      ) : (
-        <ul className="chat-list">
-          {chatGroups.map((chat) => (
-            <li 
-              key={chat.id} 
-              className={`chat-item ${selectedChatId === chat.id ? 'selected' : ''}`}
-              onClick={() => handleChatSelect(chat.id, chat.title)}
-            >
-              <div className="chat-item-content">
-                <div className="chat-avatar">
-                  {chat.title.charAt(0).toUpperCase()}
-                </div>
-                <span className="chat-title">{chat.title}</span>
-              </div>
-              <div className="chat-item-right">
-                <span className="chat-type">{chat.type.replace('chatType', '')}</span>
-                {selectedChatId === chat.id && <FaCheck className="check-icon" />}
-              </div>
-            </li>
-          ))}
-        </ul>
       )}
     </div>
   );

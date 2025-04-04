@@ -1,8 +1,8 @@
 import { TELEGRAM_API_ID, TELEGRAM_API_HASH } from './constants';
-import ChatGroupSelector from '../ChatGroupSelector/ChatGroupSelector';
 import { createEmptyFileStructure, parseFileStructure, serializeFileStructure } from '../../utils/fileStructureUtils';
 
 import React, { useState, useEffect, useRef, useCallback, useContext } from 'react';
+import ChatGroupSelector from '../ChatGroupSelector/ChatGroupSelector';
 import { TelegramContext } from '../../context/TelegramContext';
 import './TelegramMessenger.css';
 
@@ -806,7 +806,9 @@ const TelegramMessenger = () => {
       
       {isConnected && <ChatGroupSelector />}
       
-      {renderAuthForms()}
+      <div className={`messenger-container ${authState !== 'ready' ? 'visible' : 'hidden'}`}>
+        {renderAuthForms()}
+      </div>
     </div>
   );
 };
