@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { TelegramContext } from '../../context/TelegramContext';
-import { FaTelegram, FaSearch, FaArrowLeft, FaCheck } from 'react-icons/fa';
+import { FaSearch, FaArrowLeft, FaCheck, FaShieldAlt, FaLock } from 'react-icons/fa';
 import './ChatGroupSelector.css';
+import gramSafeLogo from './GramSafeLogo.svg';
 
 const ChatGroupSelector = ({ onBack }) => {
   // States for group selection
@@ -115,7 +116,8 @@ const ChatGroupSelector = ({ onBack }) => {
   const renderLoading = () => (
     <div className="group-selector-loading">
       <div className="loading-spinner"></div>
-      <p>Loading available groups...</p>
+      <p>Loading secure groups...</p>
+      <img src={gramSafeLogo} alt="GramSafe" style={{ width: '40px', marginTop: '10px', opacity: 0.7 }} />
     </div>
   );
 
@@ -132,7 +134,8 @@ const ChatGroupSelector = ({ onBack }) => {
   // Render empty state
   const renderEmpty = () => (
     <div className="group-selector-empty">
-      <p>No groups found. Please create a group in Telegram first.</p>
+      <p>No secure groups found. Please create a group in Telegram first.</p>
+      <img src={gramSafeLogo} alt="GramSafe" style={{ width: '40px', marginTop: '10px', opacity: 0.7 }} />
     </div>
   );
 
@@ -140,7 +143,10 @@ const ChatGroupSelector = ({ onBack }) => {
   const renderGroupList = () => (
     <div className="group-list">
       {filteredGroups.length === 0 ? (
-        <div className="no-results">No groups match your search</div>
+        <div className="no-results">
+          <p>No secure groups match your search</p>
+          <img src={gramSafeLogo} alt="GramSafe" style={{ width: '40px', marginTop: '10px', opacity: 0.7 }} />
+        </div>
       ) : (
         filteredGroups.map(group => (
           <div 
@@ -150,11 +156,14 @@ const ChatGroupSelector = ({ onBack }) => {
           >
             <div className="group-avatar">
               {group.title.charAt(0).toUpperCase()}
+              <div className="security-badge">
+                <FaLock size={10} color="white" />
+              </div>
             </div>
             <div className="group-info">
               <div className="group-title">{group.title}</div>
               <div className="group-type">
-                {group.type['@type'] === 'chatTypeSupergroup' ? 'Supergroup' : 'Group'}
+                {group.type['@type'] === 'chatTypeSupergroup' ? 'Secure Supergroup' : 'Secure Group'}
               </div>
             </div>
             {selectedGroup && selectedGroup.id === group.id && (
@@ -177,14 +186,14 @@ const ChatGroupSelector = ({ onBack }) => {
           </button>
         )}
         <div className="header-icon">
-          <FaTelegram />
+          <img src={gramSafeLogo} alt="GramSafe Logo" className="gramsafe-logo" />
         </div>
-        <h2>Select a Group</h2>
+        <h2>GramSafe</h2>
       </div>
       
       <div className="group-selector-content">
         <p className="instruction-text">
-          Select a Telegram group where your files will be stored.
+          Select a secure group where your files will be safely stored and protected.
         </p>
         
         <div className="search-container">
@@ -193,7 +202,7 @@ const ChatGroupSelector = ({ onBack }) => {
             type="text"
             value={searchQuery}
             onChange={handleSearchChange}
-            placeholder="Search groups..."
+            placeholder="Search secure groups..."
             className="search-input"
           />
         </div>
@@ -214,7 +223,7 @@ const ChatGroupSelector = ({ onBack }) => {
               console.log(`Group selected: ${selectedGroup.title} (${selectedGroup.id})`);
             }}
           >
-            Continue with {selectedGroup.title}
+            <FaShieldAlt style={{ marginRight: '8px' }} /> Secure with {selectedGroup.title}
           </button>
         </div>
       )}
