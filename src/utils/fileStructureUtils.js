@@ -167,6 +167,14 @@ export const moveFolder = (fileStructure, sourcePath, destPath) => {
   const folderName = segments.pop();
   const sourceParentPath = '/' + segments.join('/');
   
+  // Check if we're trying to move to the same location
+  // We need to compare the full paths to prevent moving to exactly the same path
+  // But allow moving to parent directories
+  if (sourcePath === destPath) {
+    console.error('Folder is already in this location');
+    return fileStructure;
+  }
+  
   const sourceParent = findFolderByPath(fileStructure, sourceParentPath);
   if (!sourceParent) {
     console.error(`Source parent folder not found: ${sourceParentPath}`);
@@ -180,7 +188,9 @@ export const moveFolder = (fileStructure, sourcePath, destPath) => {
   }
   
   // Check if folder with same name already exists in destination
-  if (destFolder.subfolders.some(f => f.name === folderName)) {
+  // When moving to parent directory, we need to exclude the case where the folder
+  // being moved is already a child of the destination folder
+  if (destPath !== sourceParentPath && destFolder.subfolders.some(f => f.name === folderName)) {
     console.error(`Folder with name ${folderName} already exists in destination`);
     return fileStructure;
   }
@@ -269,6 +279,14 @@ export const moveFile = (fileStructure, sourcePath, filename, destPath) => {
   const sourceFolder = findFolderByPath(fileStructure, sourcePath);
   if (!sourceFolder) {
     console.error(`Source folder not found: ${sourcePath}`);
+    return fileStructure;
+  }
+  
+  // Check if we're trying to move to the same location
+  // We only need to prevent moving to exactly the same path
+  // This allows moving to parent directories
+  if (sourcePath === destPath) {
+    console.error('File is already in this location');
     return fileStructure;
   }
   
