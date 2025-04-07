@@ -365,15 +365,31 @@ const FileExplorer = () => {
 
     // Get drag data
     const dragData = e.dataTransfer.getData('text/plain');
+    console.log("dragData: ", dragData);
+    console.log("folderName: ", folderName);
+    
+    // NOTICE: ERRORNEOUS ZONE: This is problematic. we're relying on folderName(the destination folder) being undefined as a definitive way to determine if the drop is on the parent folder area. We should be using a better method, like passing the destination folder's path to this function or something more robust like that.
+    // Note: this was working fine in commit, 29a52edc5ab6db0fa0c260608e221c112d452c1a. Maybe you'd like to study this part from there.
+
+    // Check if this is a drop on the parent folder area (when folderName is undefined and we're not at root)
+    const isParentFolderDrop = !folderName && currentPath !== '/';
     
     // Handle folder drops
     if (dragData.startsWith('folder:')) {
       const sourcePath = dragData.replace('folder:', '');
       
-      // Check if we're dropping on a specific folder or in the current directory
-      const destPath = folderName ? 
-        (currentPath === '/' ? `/${folderName}` : `${currentPath}/${folderName}`) : 
-        currentPath;
+      let destPath;
+      if (isParentFolderDrop) {
+        // If dropping on parent folder area, set destination to parent directory
+        const pathSegments = currentPath.split('/').filter(Boolean);
+        pathSegments.pop(); // Remove the last segment to get the parent path
+        destPath = pathSegments.length === 0 ? '/' : '/' + pathSegments.join('/');
+      } else {
+        // Normal folder drop - either on a specific folder or in the current directory
+        destPath = folderName ? 
+          (currentPath === '/' ? `/${folderName}` : `${currentPath}/${folderName}`) : 
+          currentPath;
+      }
       
       // Normalize paths for comparison
       const normalizedSourcePath = sourcePath.startsWith('/') ? sourcePath : `/${sourcePath}`;
@@ -419,10 +435,18 @@ const FileExplorer = () => {
       const sourceFilePath = dragData.replace('file:', '');
       const fileName = sourceFilePath.split('/').pop();
       
-      // Set destination path as the folder we're dropping into
-      const destPath = folderName ? 
-        (currentPath === '/' ? `/${folderName}` : `${currentPath}/${folderName}`) : 
-        currentPath;
+      let destPath;
+      if (isParentFolderDrop) {
+        // If dropping on parent folder area, set destination to parent directory
+        const pathSegments = currentPath.split('/').filter(Boolean);
+        pathSegments.pop(); // Remove the last segment to get the parent path
+        destPath = pathSegments.length === 0 ? '/' : '/' + pathSegments.join('/');
+      } else {
+        // Normal file drop - either on a specific folder or in the current directory
+        destPath = folderName ? 
+          (currentPath === '/' ? `/${folderName}` : `${currentPath}/${folderName}`) : 
+          currentPath;
+      }
       
       // Get the parent path of the source file
       const sourcePathSegments = sourceFilePath.split('/').filter(Boolean);
@@ -1118,7 +1142,7 @@ const FileExplorer = () => {
         // Fallback method using Blob
         const handleBlobDownload = async (fileInfo, fileName) => {
           try {
-            console.log('Starting blob download for file:', fileName, fileInfo);
+            console.log('Starting blob download for file:', fileInfo);
             
             // Make sure we have a valid file ID
             if (!fileInfo || !fileInfo.id) {
