@@ -2,6 +2,7 @@ import React, { useState, useEffect, useContext } from 'react';
 import { TelegramContext } from '../../context/TelegramContext';
 import { FaUsers, FaSignOutAlt, FaSyncAlt, FaSearch, FaCheck } from 'react-icons/fa';
 import './ChatGroupSelector.css';
+import gramSafeLogo from './GramSafeLogo.svg';
 
 const ChatGroupSelector = () => {
   const [chatGroups, setChatGroups] = useState([]);

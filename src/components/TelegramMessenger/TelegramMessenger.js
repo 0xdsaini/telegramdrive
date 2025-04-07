@@ -1,8 +1,8 @@
 import { TELEGRAM_API_ID, TELEGRAM_API_HASH } from './constants';
-import ChatGroupSelector from '../ChatGroupSelector/ChatGroupSelector';
 import { createEmptyFileStructure, parseFileStructure, serializeFileStructure } from '../../utils/fileStructureUtils';
 
 import React, { useState, useEffect, useRef, useCallback, useContext } from 'react';
+import ChatGroupSelector from '../ChatGroupSelector/ChatGroupSelector';
 import { TelegramContext } from '../../context/TelegramContext';
 import './TelegramMessenger.css';
 
@@ -798,7 +798,13 @@ const TelegramMessenger = () => {
     }
   }, [isConnected, selectedChatId, findMessageId]);
 
-  return (
+{/* I don't think this part where we're rendering anything or displaying ChatGroupSelector is needed. as we're doing all the Group selection processing and everything in Auth/GroupSelector.js. This was a legecy code when initially We used telegram messenger code as main code. Currently TelegramMessenger.js stays hidden off the screen, thus nothing needs to get displayed, just its updateAuthorizationState routing and telegramClient initialization etc are required which it can do from background i.e. when it is hidden and really we don't need to initialize the logic of ChatGroupSelector in it now.*/}
+{/* this is a 
+  block
+  comment in JSX
+  as it is down
+  below. */}
+{/*  return (
     <div className="telegram-messenger">
       <h2>Telegram Messenger</h2>
       <div className="status-indicator">
@@ -806,11 +812,17 @@ const TelegramMessenger = () => {
         <span className="status-text">{status}</span>
       </div>
       
-      {isConnected && <ChatGroupSelector />}
+       {isConnected && <ChatGroupSelector />} 
       
-      {renderAuthForms()}
+      <div className={`messenger-container ${authState !== 'ready' ? 'visible' : 'hidden'}`}>
+        {renderAuthForms()}
+      </div>
     </div>
-  );
+  ); */}
+
+{/* We don't need to render anything since this component is just used for functional requirement which it'll perfom anyway, and user don't need to see anything thus we're returning null as render. */}
+return null;
+
 };
 
 export default TelegramMessenger;
