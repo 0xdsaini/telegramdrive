@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <!-- Shield background -->
+  <path d="M50 5 L95 25 L95 45 C95 65 75 85 50 95 C25 85 5 65 5 45 L5 25 Z" fill="#005a87" />
+  
+  <!-- Inner shield -->
+  <path d="M50 15 L85 30 L85 45 C85 60 70 75 50 85 C30 75 15 60 15 45 L15 30 Z" fill="#0088cc" />
+  
+  <!-- Lock symbol -->
+  <rect x="35" y="45" width="30" height="25" rx="3" fill="#ffffff" />
+  <rect x="40" y="35" width="20" height="20" rx="10" stroke="#ffffff" stroke-width="6" fill="none" />
+  
+  <!-- G letter -->
+  <path d="M50 55 C45 55 40 50 40 45 C40 40 45 35 50 35 C55 35 60 40 60 45 L55 45 C55 42.5 52.5 40 50 40 C47.5 40 45 42.5 45 45 C45 47.5 47.5 50 50 50 L50 55 Z" fill="#ffffff" />
+  
+  <!-- S letter -->
+  <path d="M55 60 C55 62.5 52.5 65 50 65 C47.5 65 45 62.5 45 60 L40 60 C40 65 45 70 50 70 C55 70 60 65 60 60 C60 57.5 57.5 55 55 55 L50 55 L50 50 L55 50 C57.5 50 60 47.5 60 45 L55 45 Z" fill="#ffffff" />
+</svg>
