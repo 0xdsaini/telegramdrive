@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { TelegramContext } from '../../context/TelegramContext';
-import { FaTelegram, FaSearch, FaArrowLeft, FaCheck } from 'react-icons/fa';
+import { FaTelegram, FaSearch, FaArrowLeft, FaCheck, FaToggleOn, FaToggleOff } from 'react-icons/fa';
 import './Auth.css';
 
 const GroupSelector = ({ onBack }) => {
@@ -18,7 +18,9 @@ const GroupSelector = ({ onBack }) => {
     setSelectedChatId,
     selectedChatId,
     availableChats,
-    setAvailableChats
+    setAvailableChats,
+    isDryModeEnabled,
+    setIsDryModeEnabled
   } = useContext(TelegramContext);
 
   // Fetch available chats when component mounts
@@ -111,6 +113,11 @@ const GroupSelector = ({ onBack }) => {
     setSelectedChatId(group.id, group.title);
   };
 
+  // Handle Dry Mode toggle
+  const handleDryModeToggle = () => {
+    setIsDryModeEnabled(!isDryModeEnabled);
+  };
+
   // Render loading state
   const renderLoading = () => (
     <div className="group-selector-loading">
@@ -196,6 +203,23 @@ const GroupSelector = ({ onBack }) => {
             placeholder="Search groups..."
             className="search-input"
           />
+        </div>
+        
+        {/* Dry Mode Toggle */}
+        <div className="dry-mode-toggle">
+          <button 
+            className={`toggle-button ${isDryModeEnabled ? 'active' : ''}`}
+            onClick={handleDryModeToggle}
+            title={isDryModeEnabled ? "Dry Mode Enabled - Files are only removed from metadata" : "Dry Mode Disabled - Files will be actually deleted"}
+          >
+            {isDryModeEnabled ? <FaToggleOn /> : <FaToggleOff />}
+            <span>Dry Mode {isDryModeEnabled ? 'Enabled' : 'Disabled'}</span>
+          </button>
+          <p className="dry-mode-description">
+            {isDryModeEnabled ? 
+              "When enabled, files are only removed from metadata but not actually deleted from Telegram." : 
+              "When disabled, files will be permanently deleted from Telegram."}
+          </p>
         </div>
         
         {isLoading ? renderLoading() : 

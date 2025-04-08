@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { TelegramContext } from '../../context/TelegramContext';
-import { FaUsers, FaSignOutAlt, FaSyncAlt, FaSearch, FaCheck } from 'react-icons/fa';
+import { FaUsers, FaSignOutAlt, FaSyncAlt, FaSearch, FaCheck, FaToggleOn, FaToggleOff } from 'react-icons/fa';
 import './ChatGroupSelector.css';
 import gramSafeLogo from './GramSafeLogo.svg';
 
@@ -15,7 +15,9 @@ const ChatGroupSelector = () => {
     selectedChatId,
     selectedChatName,
     setSelectedChatId,
-    logout
+    logout,
+    isDryModeEnabled,
+    setIsDryModeEnabled
   } = useContext(TelegramContext);
 
   // Fetch available chat groups when connected and no group is selected
@@ -89,6 +91,10 @@ const ChatGroupSelector = () => {
     fetchChatGroups();
   };
 
+  const handleDryModeToggle = () => {
+    setIsDryModeEnabled(!isDryModeEnabled);
+  };
+
   return (
     <div className="chat-group-selector">
       <div className="selector-header">
@@ -147,6 +153,21 @@ const ChatGroupSelector = () => {
           <FaCheck style={{ fontSize: '20px', color: '#0088cc', marginBottom: '8px' }} />
           <p>Group has been selected: <strong>{selectedChatName}</strong></p>
           <p className="help-text">You can change the group after logging out and logging back in.</p>
+          <div className="dry-mode-toggle">
+            <button 
+              className={`toggle-button ${isDryModeEnabled ? 'active' : ''}`}
+              onClick={handleDryModeToggle}
+              title={isDryModeEnabled ? "Dry Mode Enabled - Files are only removed from metadata" : "Dry Mode Disabled - Files will be actually deleted"}
+            >
+              {isDryModeEnabled ? <FaToggleOn /> : <FaToggleOff />}
+              <span>Dry Mode {isDryModeEnabled ? 'Enabled' : 'Disabled'}</span>
+            </button>
+            <p className="dry-mode-description">
+              {isDryModeEnabled ? 
+                "When enabled, files are only removed from metadata but not actually deleted from Telegram." : 
+                "When disabled, files will be permanently deleted from Telegram."}
+            </p>
+          </div>
         </div>
       ) : isLoading ? (
         <div className="loading-message">

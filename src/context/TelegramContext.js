@@ -4,6 +4,7 @@ import { createEmptyFileStructure } from '../utils/fileStructureUtils';
 // Constants for localStorage keys
 const SELECTED_CHAT_KEY = 'telegram-selected-chat';
 const SELECTED_CHAT_NAME_KEY = 'telegram-selected-chat-name';
+const TELEGRAM_DRY_MODE_KEY = 'telegram-dry-mode';
 
 // Create the context
 export const TelegramContext = createContext();
@@ -33,6 +34,32 @@ export const TelegramProvider = ({ children }) => {
     return localStorage.getItem(SELECTED_CHAT_NAME_KEY) || null;
   });
   const [availableChats, setAvailableChats] = useState([]);
+  
+  // Dry Mode state - enabled by default
+  const [isDryModeEnabled, setIsDryModeEnabled] = useState(() => {
+    // Try to load the dry mode state from localStorage
+    const savedDryModeState = localStorage.getItem(TELEGRAM_DRY_MODE_KEY);
+
+    // saveDryModeState will be a string at first so "true" and "false" will lead to true and thus
+    if (!savedDryModeState) {
+      console.log("Dry mode state not found, defaulting to true")
+      localStorage.setItem(TELEGRAM_DRY_MODE_KEY, "true");
+      return true; // Default to dry mode on first run if nothing is saved
+    } else if (savedDryModeState === "true" || savedDryModeState === "false") {
+      console.log("Found dry mode state: ", savedDryModeState)
+      // returning of JSON.parse(..) will give a boolean(true or false) based on those strings either "true " or "false."
+      return JSON.parse(savedDryModeState);      
+    } else { // If other than "true", "false" i.e. garbage value stored in that, resort to dry_mode = true.
+      console.log("Dry mode contains garbage value(defaulting to true): ", savedDryModeState)
+      return true;
+    }
+  });
+
+  const saveDryModeState = (newState) => {
+    console.log("Saving dry mode state: ", newState);
+    localStorage.setItem(TELEGRAM_DRY_MODE_KEY, newState.toString());
+    setIsDryModeEnabled(newState);
+  };
   
   // Function to update file structure
   const updateFileStructure = async (newStructure) => {
@@ -179,6 +206,8 @@ export const TelegramProvider = ({ children }) => {
     setSelectedChatName,
     availableChats,
     setAvailableChats,
+    isDryModeEnabled,
+    setIsDryModeEnabled: saveDryModeState,
     logout,
     clearDownloadedFiles
   };

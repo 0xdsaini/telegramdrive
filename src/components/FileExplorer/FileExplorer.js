@@ -71,7 +71,8 @@ const FileExplorer = () => {
     isConnected,
     telegramClient,
     selectedChatId,
-    clearDownloadedFiles
+    clearDownloadedFiles,
+    isDryModeEnabled
   } = useContext(TelegramContext);
   
   // Update current folder when file structure or path changes
@@ -193,9 +194,18 @@ const FileExplorer = () => {
         return;
       }
 
-      // Move this somewhere global, where it can be set by user on login
-      const DRY_MODE = true;
+      console.log("dry mode: ", isDryModeEnabled);
+      let DRY_MODE;
+      // if there is no dry mode, assume it to be true by default. Safety first!
+      if (isDryModeEnabled === true || isDryModeEnabled === false) {
+        DRY_MODE = isDryModeEnabled;
+      } else {
+        // if it is not true or false, assume it is a string and try to parse it
+        DRY_MODE = true;
+      }
 
+
+      // Use the isDryModeEnabled state from TelegramContext
       // Collect all files in the folder and its subfolders
       const filesToDelete = collectFilesInFolder(folderToDelete, folderPath);
       console.log(`Found ${filesToDelete.length} files to delete in folder ${folderPath}`);
@@ -217,7 +227,7 @@ const FileExplorer = () => {
               // Continue with other files even if one deletion fails
             }
           } else {
-              console.log(`DRY MODE enabled: Not deleting file : ${file.message_id} for file: ${file.filename}`);
+              console.log(`Dry Mode enabled: Not deleting file : ${file.message_id} for file: ${file.filename}`);
           }
         }
       }
@@ -683,8 +693,20 @@ const FileExplorer = () => {
         setError(`No message ID found for file: ${fileName}`);
         return;
       }
-      
-      const DRY_MODE = true;
+
+      console.log("dry mode: ", isDryModeEnabled);
+      // if there is no dry mode, assume it to be true by default. Safety first!
+
+      let DRY_MODE;
+      // if there is no dry mode, assume it to be true by default. Safety first!
+      if (isDryModeEnabled === true || isDryModeEnabled === false) {
+        DRY_MODE = isDryModeEnabled;
+      } else {
+        // if it is not true or false, assume it is a string and try to parse it
+        DRY_MODE = true;
+      }
+
+      // Use isDryModeEnabled from TelegramContext
 
       if (!DRY_MODE) {
         // Delete the actual file message from Telegram
@@ -701,8 +723,8 @@ const FileExplorer = () => {
           // Continue with metadata deletion even if message deletion fails
         }
       } else {
-          // DRY MODE: Log the message ID without deleting it with filename
-          console.log(`DRY MODE enabled: Not deleting file: ${messageId} (${fileName})`);
+          // Dry Mode: Log the message ID without deleting it with filename
+          console.log(`Dry Mode enabled: Not deleting file: ${messageId} (${fileName})`);
       }
       
       // Delete file from the file structure
