@@ -3,6 +3,7 @@ import './FileExplorer.css';
 import { FaFile, FaFileImage, FaFileAlt, FaFileCode, FaFolder, FaTrash, FaArrowUp, FaPlus, FaUpload, FaHome, FaCheck, FaDownload } from 'react-icons/fa';
 import { createEmptyFileStructure, findFolderByPath, createFolder, deleteFolder, moveFolder, addFile, deleteFile, moveFile } from '../../utils/fileStructureUtils';
 import { TelegramContext } from '../../context/TelegramContext';
+import UntrackedFilesPanel from './UntrackedFilesPanel';
 
 (function() {
   const originalLog = console.log;
@@ -1541,6 +1542,12 @@ const FileExplorer = () => {
           >
             <FaFolder /> New Folder
           </button>
+          
+          <UntrackedFilesPanel
+            currentPath={currentPath} 
+            onSuccess={setSuccess} 
+            onError={setError} 
+          />
           
           {uploading && (
             <div className="loading-indicator">
