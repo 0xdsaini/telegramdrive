@@ -1,12 +1,13 @@
 import React, { useContext } from 'react';
 import { TelegramContext } from '../../context/TelegramContext';
-import { FaSignOutAlt, FaFolder, FaCloud } from 'react-icons/fa';
+import { FaSignOutAlt, FaFolder, FaCloud, FaToggleOn, FaToggleOff } from 'react-icons/fa';
 import './FileExplorerHeader.css';
 
 const FileExplorerHeader = () => {
   const { 
     selectedChatName,
-    logout
+    logout,
+    isDryModeEnabled
   } = useContext(TelegramContext);
 
   const handleLogout = () => {
@@ -25,6 +26,16 @@ const FileExplorerHeader = () => {
           <FaFolder className="folder-icon" />
           <span className="group-name">{selectedChatName || 'No group selected'}</span>
         </div>
+        <button 
+          className="dry-mode-button" 
+          title={isDryModeEnabled ? "Dry Mode Enabled - Files are only removed from metadata" : "Dry Mode Disabled - Files will be actually deleted"}
+          disabled
+        >
+          {isDryModeEnabled ? 
+            <FaToggleOn className="dry-mode-icon enabled" /> : 
+            <FaToggleOff className="dry-mode-icon disabled" />}
+          <span className="dry-mode-text">Dry Mode</span>
+        </button>
       </div>
       <div className="header-right">
         <button 

@@ -65,6 +65,39 @@
   font-size: 16px;
 }
 
+.dry-mode-button {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px;
+  margin-left: 12px;
+  background-color: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 8px;
+  color: #495057;
+  font-size: 13px;
+  transition: all 0.2s ease;
+  cursor: not-allowed;
+  opacity: 0.85;
+}
+
+.dry-mode-icon {
+  margin-right: 6px;
+  font-size: 16px;
+}
+
+.dry-mode-icon.enabled {
+  color: #0088cc;
+}
+
+.dry-mode-icon.disabled {
+  color: #6c757d;
+}
+
+.dry-mode-text {
+  font-weight: 500;
+  font-size: 12px;
+}
+
 .app-logo {
   display: flex;
   align-items: center;
@@ -107,6 +140,18 @@
   }
   
   .logout-icon {
+    margin-right: 0;
+  }
+  
+  .dry-mode-text {
+    display: none;
+  }
+  
+  .dry-mode-button {
+    padding: 6px;
+  }
+  
+  .dry-mode-icon {
     margin-right: 0;
   }
 }
