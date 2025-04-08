@@ -192,7 +192,10 @@ const FileExplorer = () => {
         setError(`Folder not found: ${folderPath}`);
         return;
       }
-      
+
+      // Move this somewhere global, where it can be set by user on login
+      const DRY_MODE = true;
+
       // Collect all files in the folder and its subfolders
       const filesToDelete = collectFilesInFolder(folderToDelete, folderPath);
       console.log(`Found ${filesToDelete.length} files to delete in folder ${folderPath}`);
@@ -200,17 +203,21 @@ const FileExplorer = () => {
       // Delete all files from Telegram
       for (const file of filesToDelete) {
         if (file.message_id) {
-          try {
-            await telegramClient.send({
-              '@type': 'deleteMessages',
-              'chat_id': selectedChatId,
-              'message_ids': [file.message_id],
-              'revoke': true
-            });
-            console.log(`Deleted message with ID: ${file.message_id} for file: ${file.filename}`);
-          } catch (deleteError) {
-            console.error(`Error deleting message for file ${file.filename}: ${deleteError.message}`);
-            // Continue with other files even if one deletion fails
+          if (!DRY_MODE) {
+            try {
+              await telegramClient.send({
+                '@type': 'deleteMessages',
+                'chat_id': selectedChatId,
+                'message_ids': [file.message_id],
+                'revoke': true
+              });
+              console.log(`Deleted message with ID: ${file.message_id} for file: ${file.filename}`);
+            } catch (deleteError) {
+              console.error(`Error deleting message for file ${file.filename}: ${deleteError.message}`);
+              // Continue with other files even if one deletion fails
+            }
+          } else {
+              console.log(`DRY MODE enabled: Not deleting file : ${file.message_id} for file: ${file.filename}`);
           }
         }
       }
@@ -677,18 +684,25 @@ const FileExplorer = () => {
         return;
       }
       
-      // Delete the actual file message from Telegram
-      try {
-        await telegramClient.send({
-          '@type': 'deleteMessages',
-          'chat_id': selectedChatId,
-          'message_ids': [messageId],
-          'revoke': true
-        });
-        console.log(`Deleted message with ID: ${messageId}`);
-      } catch (deleteError) {
-        console.error(`Error deleting message: ${deleteError.message}`);
-        // Continue with metadata deletion even if message deletion fails
+      const DRY_MODE = true;
+
+      if (!DRY_MODE) {
+        // Delete the actual file message from Telegram
+        try {
+          await telegramClient.send({
+            '@type': 'deleteMessages',
+            'chat_id': selectedChatId,
+            'message_ids': [messageId],
+            'revoke': true
+          });
+          console.log(`Deleted message with ID: ${messageId}`);
+        } catch (deleteError) {
+          console.error(`Error deleting message: ${deleteError.message}`);
+          // Continue with metadata deletion even if message deletion fails
+        }
+      } else {
+          // DRY MODE: Log the message ID without deleting it with filename
+          console.log(`DRY MODE enabled: Not deleting file: ${messageId} (${fileName})`);
       }
       
       // Delete file from the file structure
