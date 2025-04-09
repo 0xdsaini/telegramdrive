@@ -26,13 +26,15 @@ export const parseFileStructure = (messageText) => {
 
   try {
     // Extract JSON part after METADATA_STORAGE prefix
-    const jsonStartIndex = messageText.indexOf('\n');
+    const jsonStartIndex = 0;
     if (jsonStartIndex === -1) {
       return createEmptyFileStructure();
     }
     
     const jsonString = messageText.substring(jsonStartIndex).trim();
+    console.log("Inside fileStructureUtils, JSON String:", jsonString);
     const fileStructure = JSON.parse(jsonString);
+    console.log("Parsed fileStructure(inside fileStructureUtils):", fileStructure);
     
     // Validate basic structure
     if (!fileStructure.name || !Array.isArray(fileStructure.subfolders) || !Array.isArray(fileStructure.files)) {
@@ -54,10 +56,10 @@ export const parseFileStructure = (messageText) => {
 export const serializeFileStructure = (fileStructure) => {
   try {
     const jsonString = JSON.stringify(fileStructure, null, 2);
-    return `METADATA_STORAGE\n${jsonString}`;
+    return `${jsonString}`;
   } catch (error) {
     console.error('Error serializing file structure:', error);
-    return `METADATA_STORAGE\n${JSON.stringify(createEmptyFileStructure(), null, 2)}`;
+    return `${JSON.stringify(createEmptyFileStructure(), null, 2)}`;
   }
 };
 

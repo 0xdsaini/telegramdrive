@@ -45,6 +45,153 @@ const TelegramMessenger = () => {
   // Constants for localStorage keys
   const MESSAGE_ID_KEY = 'telegram-metadata-message-id';
   
+  // Helpers function to create File Blob from text
+  const createMetadataFile = (metadataText) => {
+    const blob = new Blob([metadataText], { type: 'application/json' });
+    return new File([blob], 'metadata.json', { type: 'application/json' });
+  };
+
+  const downloadFileandExtractMetadata = async (messageId) => {
+
+    // TODO: Implement Method 1 and Method 2 too above here.
+    // and change this function to full responsibility of findMetadataMessage;
+
+    let foundMessage = null;
+    let foundId = null;
+    // Method 3: Fallback to getChatHistory if searchChatMessages fails
+    try {
+      console.log("Falling back to getChatHistory...");
+      let fromMessageId = 0;
+      const maxAttempts = 5; // NOTICE: Adjust this later if number of messages starts getting somewhat high(currently, per attempt=50 messages, 5 attempts = 50*5 = 250 messages it'll retrieve only. If your METADATA_STORAGE message is in the beginning of the chat, and you have more than 250 messages after that, you'll miss that METADATA_STORAGE message. If you expect a lot of messages, you SHOULD increase this limit. And this will definitely happen as you start storing files in it more and more and more.)
+      
+      for (let attempt = 0; attempt < maxAttempts && !foundMessage; attempt++) {
+        const historyResult = await clientRef.current.send({
+          "@type": "getChatHistory",
+          "chat_id": selectedChatId,
+          "from_message_id": fromMessageId,
+          "offset": 0,
+          "limit": 50, // Get 50 messages at a time
+          "only_local": false
+        });
+        
+        if (historyResult.messages && historyResult.messages.length > 0) {
+          // Update fromMessageId for next iteration if needed
+          fromMessageId = historyResult.messages[historyResult.messages.length - 1].id;
+          
+          // Search for METADATA_STORAGE in the messages (both in text and document captions)
+          foundMessage = historyResult.messages.find(msg => 
+            (msg.content && 
+             msg.content.document && 
+             msg.content.caption && 
+             msg.content.caption.text && 
+             msg.content.caption.text.includes("METADATA_STORAGE"))
+          );
+          
+          if (foundMessage) {
+            foundId = foundMessage.id;
+            console.log("Found METADATA_STORAGE message with getChatHistory, ID:", foundId);
+            // localStorage.setItem(MESSAGE_ID_KEY, foundId.toString());
+          }
+          
+          // If we got fewer messages than requested, we've reached the end
+          if (historyResult.messages.length < 50) {
+            break;
+          }
+        } else {
+          // No more messages to check
+          break;
+        }
+      }
+      
+      // // If we get here, we didn't find the message. --> We'll reach here anyway.
+      // console.log("No METADATA_STORAGE messages found with getChatHistory");
+    } catch (historyError) {
+      console.error('Error with getChatHistory:', historyError);
+    }
+
+    setMessageId(foundMessage.id);
+
+    let message = foundMessage;
+    console.log("message", message);
+    
+    let fileId = message.content.document.document.id;
+    console.log("messageId", fileId);
+    
+    
+    // If cache version of this file exists, delete it
+    let deleteOldFile;
+    try {
+      deleteOldFile = await window.tdClient.send({
+        '@type': 'deleteFile',
+        'file_id': fileId
+      })
+      await new Promise(resolve => setTimeout(resolve, 3000)); // NOTICE: Pathetic coding here. We SHOULDN'T BE RELYING ON TIMEOUT AT ALL. They may work sometimes and sometimes won't work. It'll create terrible/unrealiable UX.
+      console.log('Old file deleted successfully', deleteOldFile);
+    } catch (error) {
+      console.error('Error deleting old file:', error);
+    }
+    
+    let downloadResult;
+    downloadResult = await window.tdClient.send({
+                '@type': 'downloadFile',
+                'file_id': fileId,
+                'priority': 32,
+                'offset': 0,
+                'limit': 0,
+                'synchronous': true // Use asynchronous download to avoid blocking UI
+    });
+
+    console.log("downloadResult", downloadResult);
+
+    if (downloadResult.local && downloadResult.local.is_downloading_completed) {
+      console.log("downloading complete");
+    } else {
+      console.log("downloading not complete yet", downloadResult.local.is_downloading_completed);
+    }
+
+    let downloadComplete = false;
+    const checkDownloadProgress = async () => {
+      if (downloadResult.local && downloadResult.local.is_downloading_completed) {
+        console.log("downloading complete");
+        downloadComplete = true;
+        return;
+      }
+    }
+
+    while (!downloadComplete) {
+      await new Promise(resolve => setTimeout(resolve, 1000)); // NOTICE: Probably bad coding here. We SHOULDN'T BE RELYING ON TIMEOUT AT ALL.
+      await checkDownloadProgress();
+    }
+    console.log("while loop ended, downloadResult", downloadResult);
+
+    const part = await window.tdClient.send({
+      '@type': 'readFilePart',
+      'file_id': fileId,
+      'offset': 0,
+      'count': 0
+    });
+
+    let text;
+    while(true){
+      if (part) {
+        text = await part.data.text();
+        // text = JSON.parse(text) // Probably we'll be needing this later.
+        console.log("File chunk:", text);
+      } else {
+        console.warn("No data or file not ready.");
+        await new Promise(resolve => setTimeout(resolve, 1000)); // NOTICE: Probably bad coding here. We SHOULDN'T BE RELYING ON TIMEOUT AT ALL.
+        continue;
+      }
+      console.log("text read from metadata json file", text);
+      break;
+    }
+
+    console.log("inside downloadFileandExtractMetadata, typeof text: ", typeof text);
+
+    return {"text": text, "id": foundId};
+    // return text;
+  }
+
   // Find message with METADATA_STORAGE prefix to enable message editing
   const findMessageId = useCallback(async () => {
     if (!clientRef.current || !getChatsPromiseRef.current || !selectedChatId) return null;
@@ -120,20 +267,22 @@ const TelegramMessenger = () => {
           
           // Load file structure from message
           try {
-            const messageContent = searchResult.messages[0].content;
-            if (messageContent && messageContent.text && messageContent.text.text) {
-              const parsedStructure = parseFileStructure(messageContent.text.text);
+            if (true) {
+              const result = await downloadFileandExtractMetadata(1234);
+              console.log("downloadFileandExtractMetadata(inside findMessageId->searchChatMessages)", result.text, typeof result.text);
+              const parsedStructure = parseFileStructure(result.text);
               console.log("Loaded file structure:", parsedStructure);
               setFileStructure(parsedStructure);
               setIsFileStructureLoaded(true);
             }
+            return foundId;
           } catch (error) {
             console.error("Error loading file structure:", error);
             setFileStructure(createEmptyFileStructure());
             setIsFileStructureLoaded(true);
           }
           
-          return foundId;
+
         } else {
           console.log("No METADATA_STORAGE messages found with searchChatMessages");
           // Continue to fallback method
@@ -167,9 +316,9 @@ const TelegramMessenger = () => {
             // Search for METADATA_STORAGE in the messages
             foundMessage = historyResult.messages.find(msg => 
               msg.content && 
-              msg.content.text && 
-              msg.content.text.text && 
-              msg.content.text.text.includes("METADATA_STORAGE")
+              msg.content.caption && 
+              msg.content.caption.text && 
+              msg.content.caption.text.includes("METADATA_STORAGE")
             );
             
             if (foundMessage) {
@@ -181,19 +330,22 @@ const TelegramMessenger = () => {
               
               // Load file structure from message
               try {
-                if (foundMessage.content && foundMessage.content.text && foundMessage.content.text.text) {
-                  const parsedStructure = parseFileStructure(foundMessage.content.text.text);
+                if (true) {
+                  const result = await downloadFileandExtractMetadata(1234);
+                  console.log("downloadFileandExtractMetadata(inside findMessageId->getChatHistory)", result.text, typeof result.text);
+                  const parsedStructure = parseFileStructure(result.text);
                   console.log("Loaded file structure:", parsedStructure);
                   setFileStructure(parsedStructure);
                   setIsFileStructureLoaded(true);
                 }
+
+                return foundId;
+
               } catch (error) {
                 console.error("Error loading file structure:", error);
                 setFileStructure(createEmptyFileStructure());
                 setIsFileStructureLoaded(true);
               }
-              
-              return foundId;
             }
             
             // If we got fewer messages than requested, we've reached the end
@@ -575,6 +727,68 @@ const TelegramMessenger = () => {
   const editMessage = async (newMessage, message_id, chat_id) => {
     console.log("Editing message with ID:", message_id);
 
+    // With file based metadata, it won't be compabitle with old telegram' interface's edit message. You can edit that function respectively if you want to use file based metadata with that.
+
+    let newMetadataFile = createMetadataFile(newMessage);
+    let message;
+
+    try {
+      message = window.tdClient.send({
+        '@type': 'editMessageMedia',
+        'chat_id': chat_id,
+        'message_id': message_id,
+        'input_message_content': {
+          '@type': 'inputMessageDocument',
+          'document': {
+            '@type': 'inputFileBlob',
+            'name': newMetadataFile.name,
+            'data': newMetadataFile
+          },
+            'caption': {
+              '@type': 'formattedText',
+              'text': 'METADATA_STORAGE'
+            }
+        }
+      });
+
+      console.log("Message sent just now", message);
+
+      // let fileId = message.content.document.document.id;
+      // console.log("messageId", fileId);
+
+      // the message.id that's being passed to it is bogus/garbage. it don't
+      // mean a thing.
+      // let text = await downloadFileandExtractMetadata(message.id).text;
+      // console.log("text(inside sendMessage): ", text);      
+
+      // TODO: I don't think we can store message_id in localStorage here, because we're not getting it from the preceding function. Also is this this function's responsibility to store it in localStorage, I don't think so. But maybe yes, find out and resolve this matter
+      // localStorage.setItem(MESSAGE_ID_KEY, result.id.toString());
+      console.log('Message edited successfully');
+      setStatus('Message edited successfully');
+      
+      // Reset status after 3 seconds
+      setTimeout(() => {
+        if (isConnected) {
+          setStatus('Connected to Telegram');
+        }
+      }, 3000);
+
+      // TODO: Fix this later.
+      // The caller needs this message to access its message.id
+      // which is garbage/random value given by telegram. real value is provided
+      // by it in updateMessage or updateFile somewhat event. these values are
+      // useless really.
+
+      // TODO: Fix this, Hacky: wait for 1 second before returning
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      return messageId;
+      
+    } catch(error) {
+      console.error('Error sending message:', error);
+      setStatus('Error sending message');
+      throw error;
+    }
+
     try {
       const result = await clientRef.current.send({
         '@type': 'editMessageText',
@@ -633,6 +847,7 @@ const TelegramMessenger = () => {
       } else {
         const result = await sendMessage(messageText, selectedChatId);
         // If this is the first time sending the message, we need to update the messageId
+        console.log("ResultId(in updateFileStructure):", result.id);
         if (result && result.id && !messageId) {
           setMessageId(result.id);
           setContextMessageId(result.id);
@@ -668,25 +883,19 @@ const TelegramMessenger = () => {
     console.log("Sending new message to chat ID:", chat_id);
 
     console.log("Inside sendMessage");
-    let a = "aaaaa";
 
-    const createMetadataFile = (metadataText) => {
-      const blob = new Blob([metadataText], { type: 'application/json' });
-      return new File([blob], 'metadata.json', { type: 'application/json' });
-    };
-
-    let b = createMetadataFile(a);
+    let metadataFile = createMetadataFile(newMessage);
     let message;
     try {
       message = await window.tdClient.send({
         '@type': 'sendMessage',
-        'chat_id': -1002574352813,
+        'chat_id': chat_id,
         'input_message_content': {
           '@type': 'inputMessageDocument',
           'document': {
             '@type': 'inputFileBlob',
-            'name': b.name,
-            'data': b
+            'name': metadataFile.name,
+            'data': metadataFile
           },
             'caption': {
               '@type': 'formattedText',
@@ -697,115 +906,16 @@ const TelegramMessenger = () => {
 
       console.log("Message sent just now", message);
 
-      let fileId = message.content.document.document.id;
-      console.log("messageId", fileId);
+      // let fileId = message.content.document.document.id;
+      // console.log("messageId", fileId);
 
-      // let fileInfo;
-      // fileInfo = await window.tdClient.send({
-      //       '@type': 'getFile',
-      //       'file_id': fileId
-      // });
+      // the message.id that's being passed to it is bogus/garbage. it don't
+      // mean a thing.
+      let result = await downloadFileandExtractMetadata(message.id);
+      console.log("text(inside sendMessage): ", result);      
 
-      // console.log("fileInfo", fileInfo);
-
-      // If cache version of this file exists, delete it
-      let deleteOldFile;
-      try {
-        deleteOldFile = await window.tdClient.send({
-          '@type': 'deleteFile',
-          'file_id': fileId
-        })
-        console.log('Old file deleted successfully', deleteOldFile);
-      } catch (error) {
-        console.error('Error deleting old file:', error);
-      }
-      
-
-      let downloadResult;
-      downloadResult = await window.tdClient.send({
-                  '@type': 'downloadFile',
-                  'file_id': fileId,
-                  'priority': 1,
-                  'offset': 0,
-                  'limit': 0,
-                  'synchronous': true // Use asynchronous download to avoid blocking UI
-      });
-
-      console.log("downloadResult", downloadResult);
-
-      if (downloadResult.local && downloadResult.local.is_downloading_completed) {
-        console.log("downloading complete");
-      } else {
-        console.log("downloading not complete yet", downloadResult.local.is_downloading_completed);
-      }
-
-      let downloadComplete = false;
-      const checkDownloadProgress = async () => {
-        if (downloadResult.local && downloadResult.local.is_downloading_completed) {
-          console.log("downloading complete");
-          downloadComplete = true;
-          return;
-        }
-      }
-
-      while (!downloadComplete) {
-        await new Promise(resolve => setTimeout(resolve, 1000)); // Wait for 1 second
-        await checkDownloadProgress();
-      }
-      console.log("while loop ended, downloadResult", downloadResult);
-
-      async function readDownloadedFile(file) {
-        const localPath = file.local?.path;
-      
-        if (!localPath) {
-          console.error("No local path found");
-          return;
-        }
-      
-        try {
-          const response = await fetch(localPath);
-          
-          if (!response.ok) {
-            throw new Error("Failed to fetch file content");
-          }
-      
-          const text = await response.text();
-          console.log("File content:\n", text);
-        } catch (err) {
-          console.error("Error reading file:", err);
-        }
-      }
-
-      readDownloadedFile(downloadResult);
-      
-
-    } catch(error) {
-      console.error('Error sending message:', error);
-    }
-    try {
-      // Add METADATA_STORAGE prefix if this is a message we want to edit later
-      const messageText = newMessage;
-      
-      const result = await clientRef.current.send({
-        '@type': 'sendMessage',
-        'chat_id': chat_id,
-        'input_message_content': {
-          '@type': 'inputMessageText',
-          'text': {
-            '@type': 'formattedText',
-            'text': messageText
-          }
-        }
-      });
-      
-      console.log('Message sent successfully');
-      setStatus('Message sent successfully');
-
-      // If this is a METADATA_STORAGE message, save its ID to localStorage when we get it
-      if (messageText.includes("METADATA_STORAGE") && result && result.id) {
-        console.log("Saving new METADATA_STORAGE message ID to localStorage:", result.id);
-        localStorage.setItem(MESSAGE_ID_KEY, result.id.toString());
-      }
+      // TODO: I don't think we can store message_id in localStorage here, because we're not getting it from the preceding function. Also is this this function's responsibility to store it in localStorage, I don't think so. But maybe yes, find out and resolve this matter
+      // localStorage.setItem(MESSAGE_ID_KEY, result.id.toString());
 
       // Reset status after 3 seconds
       setTimeout(() => {
@@ -813,13 +923,60 @@ const TelegramMessenger = () => {
           setStatus('Connected to Telegram');
         }
       }, 3000);
-      
+
+      // TODO: Fix this later.
+      // The caller needs this message to access its message.id
+      // which is garbage/random value given by telegram. real value is provided
+      // by it in updateMessage or updateFile somewhat event. these values are
+      // useless really.
+
+      // TODO: Fix this, Hacky: wait for 1 second before returning
+      await new Promise(resolve => setTimeout(resolve, 1000));
       return result;
-    } catch (error) {
+      
+    } catch(error) {
       console.error('Error sending message:', error);
       setStatus('Error sending message');
       throw error;
     }
+    // try {
+    //   // Add METADATA_STORAGE prefix if this is a message we want to edit later
+    //   const messageText = newMessage;
+      
+    //   const result = await clientRef.current.send({
+    //     '@type': 'sendMessage',
+    //     'chat_id': chat_id,
+    //     'input_message_content': {
+    //       '@type': 'inputMessageText',
+    //       'text': {
+    //         '@type': 'formattedText',
+    //         'text': messageText
+    //       }
+    //     }
+    //   });
+      
+    //   console.log('Message sent successfully');
+    //   setStatus('Message sent successfully');
+
+    //   // If this is a METADATA_STORAGE message, save its ID to localStorage when we get it
+    //   if (messageText.includes("METADATA_STORAGE") && result && result.id) {
+    //     console.log("Saving new METADATA_STORAGE message ID to localStorage:", result.id);
+    //     localStorage.setItem(MESSAGE_ID_KEY, result.id.toString());
+    //   }
+
+    //   // Reset status after 3 seconds
+    //   setTimeout(() => {
+    //     if (isConnected) {
+    //       setStatus('Connected to Telegram');
+    //     }
+    //   }, 3000);
+      
+    //   return result;
+    // } catch (error) {
+    //   console.error('Error sending message:', error);
+    //   setStatus('Error sending message');
+    //   throw error;
+    // }
   }
   
   // Render authentication forms based on current auth state
