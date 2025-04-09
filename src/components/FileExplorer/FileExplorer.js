@@ -5,31 +5,31 @@ import { createEmptyFileStructure, findFolderByPath, createFolder, deleteFolder,
 import { TelegramContext } from '../../context/TelegramContext';
 import UntrackedFilesPanel from './UntrackedFilesPanel';
 
-(function() {
-  const originalLog = console.log;
-  let logData = [];
+// (function() {
+//   const originalLog = console.log;
+//   let logData = [];
 
-  console.log = function(...args) {
-    const formattedArgs = args.map(arg => {
-      if (typeof arg === 'object') {
-        return JSON.stringify(arg, null, 2); // Properly format objects
-      }
-      return arg;
-    });
+//   console.log = function(...args) {
+//     const formattedArgs = args.map(arg => {
+//       if (typeof arg === 'object') {
+//         return JSON.stringify(arg, null, 2); // Properly format objects
+//       }
+//       return arg;
+//     });
 
-    const logEntry = `[${new Date().toISOString()}] ${formattedArgs.join(' ')}`;
-    logData.push(logEntry);
-    originalLog.apply(console, args);
-  };
+//     const logEntry = `[${new Date().toISOString()}] ${formattedArgs.join(' ')}`;
+//     logData.push(logEntry);
+//     originalLog.apply(console, args);
+//   };
 
-  window.saveLogs = function() {
-    const blob = new Blob([logData.join('\n')], { type: 'text/plain' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'console_logs.txt';
-    a.click();
-  };
-})();
+//   window.saveLogs = function() {
+//     const blob = new Blob([logData.join('\n')], { type: 'text/plain' });
+//     const a = document.createElement('a');
+//     a.href = URL.createObjectURL(blob);
+//     a.download = 'console_logs.txt';
+//     a.click();
+//   };
+// })();
 
 
 // Helper function to determine the appropriate icon based on file extension

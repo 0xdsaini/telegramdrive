@@ -667,6 +667,121 @@ const TelegramMessenger = () => {
   const sendMessage = async (newMessage, chat_id) => {
     console.log("Sending new message to chat ID:", chat_id);
 
+    console.log("Inside sendMessage");
+    let a = "aaaaa";
+
+    const createMetadataFile = (metadataText) => {
+      const blob = new Blob([metadataText], { type: 'application/json' });
+      return new File([blob], 'metadata.json', { type: 'application/json' });
+    };
+
+    let b = createMetadataFile(a);
+    let message;
+    try {
+      message = await window.tdClient.send({
+        '@type': 'sendMessage',
+        'chat_id': -1002574352813,
+        'input_message_content': {
+          '@type': 'inputMessageDocument',
+          'document': {
+            '@type': 'inputFileBlob',
+            'name': b.name,
+            'data': b
+          },
+            'caption': {
+              '@type': 'formattedText',
+              'text': 'METADATA_STORAGE'
+            }
+        }
+      });
+
+      console.log("Message sent just now", message);
+
+      let fileId = message.content.document.document.id;
+      console.log("messageId", fileId);
+
+      // let fileInfo;
+      // fileInfo = await window.tdClient.send({
+      //       '@type': 'getFile',
+      //       'file_id': fileId
+      // });
+
+      // console.log("fileInfo", fileInfo);
+
+      // If cache version of this file exists, delete it
+      let deleteOldFile;
+      try {
+        deleteOldFile = await window.tdClient.send({
+          '@type': 'deleteFile',
+          'file_id': fileId
+        })
+        console.log('Old file deleted successfully', deleteOldFile);
+      } catch (error) {
+        console.error('Error deleting old file:', error);
+      }
+      
+
+      let downloadResult;
+      downloadResult = await window.tdClient.send({
+                  '@type': 'downloadFile',
+                  'file_id': fileId,
+                  'priority': 1,
+                  'offset': 0,
+                  'limit': 0,
+                  'synchronous': true // Use asynchronous download to avoid blocking UI
+      });
+
+      console.log("downloadResult", downloadResult);
+
+      if (downloadResult.local && downloadResult.local.is_downloading_completed) {
+        console.log("downloading complete");
+      } else {
+        console.log("downloading not complete yet", downloadResult.local.is_downloading_completed);
+      }
+
+      let downloadComplete = false;
+      const checkDownloadProgress = async () => {
+        if (downloadResult.local && downloadResult.local.is_downloading_completed) {
+          console.log("downloading complete");
+          downloadComplete = true;
+          return;
+        }
+      }
+
+      while (!downloadComplete) {
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Wait for 1 second
+        await checkDownloadProgress();
+      }
+      console.log("while loop ended, downloadResult", downloadResult);
+
+      async function readDownloadedFile(file) {
+        const localPath = file.local?.path;
+      
+        if (!localPath) {
+          console.error("No local path found");
+          return;
+        }
+      
+        try {
+          const response = await fetch(localPath);
+          
+          if (!response.ok) {
+            throw new Error("Failed to fetch file content");
+          }
+      
+          const text = await response.text();
+          console.log("File content:\n", text);
+        } catch (err) {
+          console.error("Error reading file:", err);
+        }
+      }
+
+      readDownloadedFile(downloadResult);
+      
+
+    } catch(error) {
+      console.error('Error sending message:', error);
+    }
     try {
       // Add METADATA_STORAGE prefix if this is a message we want to edit later
       const messageText = newMessage;
