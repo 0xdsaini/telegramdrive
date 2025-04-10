@@ -197,8 +197,8 @@ const UntrackedFilesPanel = ({ currentPath, onSuccess, onError }) => {
                     )}
                   </div>
                   <div className="file-details">
-                    <span className="file-name">{file.filename}</span>
-                    <span className="file-info">{(file.size / 1024).toFixed(2)} KB • {file.date}</span>
+                    <span className="untracked-file-name">{file.filename}</span>
+                    <span className="untracked-file-info">{(file.size / 1024).toFixed(2)} KB • {file.date}</span>
                   </div>
                 </div>
               ))
