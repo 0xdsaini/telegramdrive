@@ -65,5 +65,14 @@ export function installStreamDebugHelpers() {
   window.dumpStreamDebugLogs = () => {
     console.table(window.__STREAM_DEBUG_LOGS || []);
   };
-  streamDebug('init', 'Helpers installed. Use copyStreamDebugLogs() or dumpStreamDebugLogs()');
+  window.resetStreamServiceWorker = async () => {
+    const regs = await navigator.serviceWorker?.getRegistrations?.();
+    await Promise.all((regs || []).map((r) => r.unregister()));
+    sessionStorage.removeItem('stream-sw-reload-attempted');
+    window.location.reload();
+  };
+  streamDebug(
+    'init',
+    'Helpers: copyStreamDebugLogs(), dumpStreamDebugLogs(), resetStreamServiceWorker()'
+  );
 }

@@ -2,12 +2,15 @@
 /**
  * Telegram Web K–style media streaming (service worker + HTTP Range).
  * File bytes are fetched from the page via TDLib (downloadFile + readFilePart).
+ * STREAM_SW_REV=6 — TDLib: sequential 1 MiB parts (no single 2 MiB downloadFile).
  */
+const STREAM_SW_REV = 6;
 
 const STREAM_CHUNK_MIDDLE_LIMIT = 512 * 1024;
 const STREAM_CHUNK_UPPER_LIMIT = 1024 * 1024;
 const SMALLEST_CHUNK_LIMIT = 4 * 1024;
 const PRELOAD_SIZE = 20 * 1024 * 1024;
+const PRELOAD_SIZE_TDLIB = 0;
 const CACHE_NAME = 'cachedStreamChunks-v1';
 const CACHE_URL_PREFIX = 'https://stream-cache.local/';
 
@@ -89,7 +92,7 @@ async function openCache() {
   }
 }
 
-async function requestFilePartFromPage(info, alignedOffset, limit) {
+async function requestFilePartFromPage(info, alignedOffset, limit, fromPreload = false) {
   const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
   swDebug('page-part', 'clients', { count: clients.length, ids: clients.map((c) => c.id) });
   const client = clients[0];
@@ -103,6 +106,8 @@ async function requestFilePartFromPage(info, alignedOffset, limit) {
     size: info.size,
     offset: alignedOffset,
     limit,
+    fromPreload: !!fromPreload,
+    priority: fromPreload ? 'preload' : 'foreground',
   };
   const taskId = JSON.stringify(payload);
 
@@ -224,10 +229,22 @@ class Stream {
     }
   }
 
+  usesTdlib() {
+    return this.info.backend !== 'mtproto';
+  }
+
+  preloadSize() {
+    return this.usesTdlib() ? PRELOAD_SIZE_TDLIB : PRELOAD_SIZE;
+  }
+
   async requestFilePart(alignedOffset, limit, fromPreload = false) {
     const cached = await this.requestFilePartFromCache(alignedOffset, limit);
     if (cached) {
       return cached;
+    }
+
+    if (this.usesTdlib() && fromPreload) {
+      return new Uint8Array(0);
     }
 
     if (this.loadedOffsets.has(alignedOffset) && fromPreload) {
@@ -235,23 +252,26 @@ class Stream {
     }
     this.loadedOffsets.add(alignedOffset);
 
-    const bytesPromise = requestFilePartFromPage(this.info, alignedOffset, limit);
+    const payloadLimit = limit;
+    const bytesPromise = requestFilePartFromPage(this.info, alignedOffset, payloadLimit, fromPreload);
     this.saveChunkToCache(bytesPromise, alignedOffset, limit);
 
-    if (!fromPreload) {
-      this.preloadChunks(alignedOffset, PRELOAD_SIZE);
+    if (!fromPreload && this.preloadSize() > 0) {
+      this.preloadChunks(alignedOffset, this.preloadSize());
     }
 
     return bytesPromise;
   }
 
   preloadChunk(offset) {
+    if (this.preloadSize() <= 0) return;
     if (this.loadedOffsets.has(offset)) return;
     this.loadedOffsets.add(offset);
     this.requestFilePart(offset, this.limitPart, true).catch(() => {});
   }
 
   preloadChunks(from, size) {
+    if (size <= 0) return;
     if (!from) {
       if (this.info.size) {
         this.preloadChunk(alignOffset(this.info.size - 1, this.limitPart));
@@ -301,14 +321,29 @@ class Stream {
       overflow = end - alignedOffset - limit + 1;
     }
 
-    const parts = await Promise.all([
-      this.requestFilePart(alignedOffset, limit),
-      overflow && overflow > 0 ? this.requestFilePart(alignedOffset + limit, limit) : null,
-    ]);
+    const needsSecondChunk = overflow && overflow > 0;
 
-    let ab = bufferConcats(...parts);
+    swDebug('range', 'fetchPlan', {
+      fileId: this.info.fileId,
+      offset,
+      end,
+      alignedOffset,
+      limit,
+      needsSecondChunk: !!needsSecondChunk,
+      tdlib: this.usesTdlib(),
+      rev: STREAM_SW_REV,
+    });
 
-    if (offset !== alignedOffset || end !== alignedOffset + limit - 1) {
+    let ab;
+    if (this.usesTdlib() && needsSecondChunk) {
+      const p1 = await this.requestFilePart(alignedOffset, limit);
+      const p2 = await this.requestFilePart(alignedOffset + limit, limit);
+      ab = bufferConcats(p1, p2);
+    } else {
+      ab = await this.requestFilePart(alignedOffset, limit);
+    }
+
+    if (offset !== alignedOffset || end !== alignedOffset + limit) {
       const sliceStart = offset - alignedOffset;
       const sliceEnd = end - alignedOffset + 1;
       ab = ab.subarray(sliceStart, sliceEnd);
@@ -399,7 +434,7 @@ self.addEventListener('message', (event) => {
 });
 
 self.addEventListener('install', () => {
-  swDebug('lifecycle', 'install', {});
+  swDebug('lifecycle', 'install', { STREAM_SW_REV });
   self.skipWaiting();
 });
 

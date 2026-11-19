@@ -1,10 +1,28 @@
 import { getAppBasePath } from './appBasePath';
-import { requestTdlibFilePart, cancelTdlibFilePartRequests } from './tdlibFilePartReader';
+import {
+  requestTdlibFilePart,
+  cancelTdlibFilePartRequests,
+  cancelTdlibFileDownloads,
+  prioritizeStreamingDownloads,
+} from './tdlibFilePartReader';
 import { streamDebug, streamDebugError } from './streamDebug';
 
 let registered = false;
 let activeClient = null;
 let registrationRef = null;
+const STREAM_SW_REV = 6;
+const partRequestChains = new Map();
+
+function withFilePartQueue(fileId, task) {
+  const prev = partRequestChains.get(fileId) ?? Promise.resolve();
+  const run = prev.catch(() => {}).then(task);
+  partRequestChains.set(fileId, run);
+  return run.finally(() => {
+    if (partRequestChains.get(fileId) === run) {
+      partRequestChains.delete(fileId);
+    }
+  });
+}
 
 function getScope() {
   const base = getAppBasePath();
@@ -120,23 +138,28 @@ async function handleStreamRequest(event) {
     return;
   }
 
+  const { fileId, size, offset, limit, fromPreload } = payload;
   const t0 = performance.now();
-  try {
-    const { fileId, size, offset, limit } = payload;
-    const bytes = await requestTdlibFilePart(activeClient, fileId, size, offset, limit);
-    const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-    streamDebug('bridge', 'STREAM_REQUEST_PART OK', {
-      fileId,
-      offset,
-      limit,
-      byteLength: buffer.byteLength,
-      ms: Math.round(performance.now() - t0),
-    });
-    port.postMessage({ bytes: buffer }, [buffer]);
-  } catch (error) {
-    streamDebugError('bridge', 'STREAM_REQUEST_PART failed', error);
-    port.postMessage({ error: error.message || String(error) });
-  }
+
+  withFilePartQueue(fileId, async () => {
+    try {
+      const bytes = await requestTdlibFilePart(activeClient, fileId, size, offset, limit, {
+        fromPreload: !!fromPreload,
+      });
+      const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+      streamDebug('bridge', 'STREAM_REQUEST_PART OK', {
+        fileId,
+        offset,
+        limit,
+        byteLength: buffer.byteLength,
+        ms: Math.round(performance.now() - t0),
+      });
+      port.postMessage({ bytes: buffer }, [buffer]);
+    } catch (error) {
+      streamDebugError('bridge', 'STREAM_REQUEST_PART failed', error);
+      port.postMessage({ error: error.message || String(error) });
+    }
+  });
 }
 
 export function setStreamBridgeClient(telegramClient) {
@@ -150,7 +173,7 @@ async function ensureStreamBridgeRegistered() {
   }
 
   const base = getAppBasePath();
-  const swUrl = `${base}/progressive-sw.js`;
+  const swUrl = `${base}/progressive-sw.js?rev=${STREAM_SW_REV}`;
   const scope = getScope();
 
   if (!registered) {
@@ -162,9 +185,13 @@ async function ensureStreamBridgeRegistered() {
       if (event.data?.type === 'STREAM_REQUEST_PART') {
         handleStreamRequest(event);
       }
+      if (event.data?.type === 'STREAM_PRIORITIZE') {
+        streamDebug('bridge', 'STREAM_PRIORITIZE (noop)', { fileId: event.data.fileId });
+        prioritizeStreamingDownloads(activeClient, event.data.fileId);
+      }
       if (event.data?.type === 'STREAM_CANCEL_PARTS') {
         streamDebug('bridge', 'STREAM_CANCEL_PARTS', { fileId: event.data.fileId });
-        cancelTdlibFilePartRequests(event.data.fileId);
+        cancelTdlibFileDownloads(activeClient, event.data.fileId);
       }
       if (event.data?.type === 'STREAM_DEBUG_RELAY') {
         streamDebug(`sw:${event.data.stage}`, event.data.msg, event.data.extra);
