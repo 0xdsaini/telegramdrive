@@ -5,6 +5,8 @@ import FileExplorerHeader from './components/FileExplorer/FileExplorerHeader';
 import Auth from './components/Auth/Auth';
 import TelegramMessenger from './components/TelegramMessenger/TelegramMessenger';
 import { TelegramProvider, useTelegram } from './context/TelegramContext';
+import { registerStreamBridge, setStreamBridgeClient } from './utils/streamBridge';
+import { installStreamDebugHelpers } from './utils/streamDebug';
 
 // Component to handle app-level effects
 const AppContent = () => {
@@ -12,7 +14,8 @@ const AppContent = () => {
     clearDownloadedFiles, 
     isConnected, 
     selectedChatId,
-    isFileStructureLoaded
+    isFileStructureLoaded,
+    telegramClient
   } = useTelegram();
   
   // Set up event listener to clear files on page refresh/close
@@ -28,6 +31,15 @@ const AppContent = () => {
       window.removeEventListener('beforeunload', clearDownloadedFiles);
     };
   }, [clearDownloadedFiles]);
+
+  useEffect(() => {
+    installStreamDebugHelpers();
+    registerStreamBridge();
+  }, []);
+
+  useEffect(() => {
+    setStreamBridgeClient(telegramClient);
+  }, [telegramClient]);
   
   // Determine what to render based on authentication state
   const isAuthenticated = isConnected && selectedChatId;

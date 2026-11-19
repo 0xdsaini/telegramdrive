@@ -1,6 +1,12 @@
 import React, { useState, useRef, useEffect, useContext } from 'react';
 import './FileExplorer.css';
-import { FaFile, FaFileImage, FaFileAlt, FaFileCode, FaFolder, FaTrash, FaArrowUp, FaPlus, FaUpload, FaHome, FaCheck, FaDownload } from 'react-icons/fa';
+import { FaFile, FaFileImage, FaFileAlt, FaFileCode, FaFolder, FaTrash, FaArrowUp, FaPlus, FaUpload, FaHome, FaCheck, FaDownload, FaPlay } from 'react-icons/fa';
+import VideoPlayerModal from '../VideoPlayer/VideoPlayerModal';
+import { resolveTelegramFile } from '../../utils/telegramFileResolver';
+import { getStreamUrl } from '../../utils/streamUrl';
+import { isStreamableMediaFileName, mimeTypeFromFileName } from '../../utils/mimeTypes';
+import { streamDebug, streamDebugError } from '../../utils/streamDebug';
+import { waitForStreamServiceWorkerControl } from '../../utils/streamBridge';
 import { createEmptyFileStructure, findFolderByPath, createFolder, deleteFolder, moveFolder, addFile, deleteFile, moveFile } from '../../utils/fileStructureUtils';
 import { TelegramContext } from '../../context/TelegramContext';
 import UntrackedFilesPanel from './UntrackedFilesPanel';
@@ -63,6 +69,7 @@ const FileExplorer = () => {
   const [success, setSuccess] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [streamPlayer, setStreamPlayer] = useState({ open: false, url: '', title: '' });
   
   // Access the Telegram context
   const { 
@@ -746,6 +753,65 @@ const FileExplorer = () => {
   };
 
   // Handle file download
+  const handleStreamPlay = async (fileName, e) => {
+    e.stopPropagation();
+    streamDebug('play', 'handleStreamPlay click', {
+      fileName,
+      swController: !!navigator.serviceWorker?.controller,
+    });
+
+    try {
+      if (!isConnected || !telegramClient) {
+        streamDebugError('play', 'not connected', new Error('no telegramClient'));
+        setError('Not connected to Telegram. Please authenticate first.');
+        return;
+      }
+      if (!selectedChatId) {
+        setError('No chat group selected.');
+        return;
+      }
+
+      const folder = findFolderByPath(fileStructure, currentPath);
+      if (!folder) {
+        setError(`Folder not found: ${currentPath}`);
+        return;
+      }
+
+      const fileEntry = folder.files.find((f) => f.filename === fileName);
+      if (!fileEntry?.message_id) {
+        setError(`No message ID for file: ${fileName}`);
+        return;
+      }
+
+      setError(null);
+      setSuccess(`Activating stream worker for ${fileName}...`);
+      await waitForStreamServiceWorkerControl();
+      setSuccess(`Opening stream for ${fileName}...`);
+
+      const resolved = await resolveTelegramFile(
+        telegramClient,
+        selectedChatId,
+        fileName,
+        fileEntry.message_id
+      );
+      streamDebug('play', 'resolveTelegramFile OK', resolved);
+
+      const streamUrl = getStreamUrl({
+        fileId: resolved.fileId,
+        size: resolved.size,
+        mimeType: mimeTypeFromFileName(fileName),
+        fileName,
+      });
+      streamDebug('play', 'stream URL built', { streamUrl, mime: mimeTypeFromFileName(fileName) });
+
+      setStreamPlayer({ open: true, url: streamUrl, title: fileName });
+      setSuccess(null);
+    } catch (playError) {
+      streamDebugError('play', 'handleStreamPlay failed', playError);
+      setError(playError.message || 'Failed to start streaming playback.');
+    }
+  };
+
   const handleDownloadFile = async (fileName, e) => {
     e.stopPropagation(); // Prevent any parent click events
     
@@ -1630,6 +1696,15 @@ const FileExplorer = () => {
                 >
                   {getFileIcon(file.filename)}
                   <span className="file-name">{file.filename}</span>
+                  {isStreamableMediaFileName(file.filename) && (
+                    <button
+                      className="play-button"
+                      onClick={(e) => handleStreamPlay(file.filename, e)}
+                      title="Stream (Telegram Web–style)"
+                    >
+                      <FaPlay />
+                    </button>
+                  )}
                   <button 
                     className="download-button"
                     onClick={(e) => handleDownloadFile(file.filename, e)}
@@ -1650,6 +1725,12 @@ const FileExplorer = () => {
           )}
         </div>
       </div>
+      <VideoPlayerModal
+        open={streamPlayer.open}
+        title={streamPlayer.title}
+        streamUrl={streamPlayer.url}
+        onClose={() => setStreamPlayer({ open: false, url: '', title: '' })}
+      />
     </div>
   );
 };
