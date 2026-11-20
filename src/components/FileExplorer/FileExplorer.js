@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useContext, useCallback } from 'react';
 import './FileExplorer.css';
-import { FaFile, FaFileImage, FaFileAlt, FaFileCode, FaFolder, FaTrash, FaArrowUp, FaPlus, FaUpload, FaHome, FaCheck, FaDownload, FaPlay } from 'react-icons/fa';
+import { FaFile, FaFileImage, FaFileAlt, FaFileCode, FaFolder, FaTrash, FaArrowUp, FaPlus, FaUpload, FaHome, FaCheck } from 'react-icons/fa';
+import FileGridItem from './FileGridItem';
 import VideoPlayerModal from '../VideoPlayer/VideoPlayerModal';
 import VideoPosterTile from './VideoPosterTile';
 import { resolveTelegramFile } from '../../utils/telegramFileResolver';
@@ -809,7 +810,7 @@ const FileExplorer = () => {
 
   // Handle file download
   const handleStreamPlay = async (fileName, e) => {
-    e.stopPropagation();
+    e?.stopPropagation?.();
     streamDebug('play', 'handleStreamPlay click', {
       fileName,
       swController: !!navigator.serviceWorker?.controller,
@@ -1745,51 +1746,34 @@ const FileExplorer = () => {
                 </div>
               ))}
               
-              {currentFolder && currentFolder.files && currentFolder.files.map((file) => (
-                <div 
-                  key={file.filename} 
-                  className={`file-item${isVideoFileName(file.filename) ? ' file-item--video' : ''}`}
-                  draggable
-                  onDragStart={(e) => {
-                    e.dataTransfer.setData('text/plain', `file:${currentPath === '/' ? `/${file.filename}` : `${currentPath}/${file.filename}`}`);
-                  }}
-                >
-                  {isVideoFileName(file.filename) && file.message_id && selectedChatId ? (
-                    <VideoPosterTile
-                      telegramClient={telegramClient}
-                      chatId={selectedChatId}
-                      messageId={file.message_id}
-                      fileName={file.filename}
-                    />
-                  ) : (
-                    getFileIcon(file.filename)
-                  )}
-                  <span className="file-name">{file.filename}</span>
-                  {isStreamableMediaFileName(file.filename) && (
-                    <button
-                      className="play-button"
-                      onClick={(e) => handleStreamPlay(file.filename, e)}
-                      title="Stream (Telegram Web–style)"
-                    >
-                      <FaPlay />
-                    </button>
-                  )}
-                  <button 
-                    className="download-button"
-                    onClick={(e) => handleDownloadFile(file.filename, e)}
-                    title="Download file"
-                  >
-                    <FaDownload />
-                  </button>
-                  <button 
-                    className="delete-button"
-                    onClick={(e) => handleDeleteFile(file.filename, e)}
-                    title="Delete file"
-                  >
-                    <FaTrash />
-                  </button>
-                </div>
-              ))}
+              {currentFolder && currentFolder.files && currentFolder.files.map((file) => {
+                const isVideo = isVideoFileName(file.filename);
+                const isStreamable = isStreamableMediaFileName(file.filename);
+                return (
+                  <FileGridItem
+                    key={file.filename}
+                    filename={file.filename}
+                    currentPath={currentPath}
+                    isVideo={isVideo}
+                    isStreamable={isStreamable}
+                    onPlay={handleStreamPlay}
+                    onDownload={handleDownloadFile}
+                    onDelete={handleDeleteFile}
+                    icon={getFileIcon(file.filename)}
+                    poster={
+                      isVideo && file.message_id && selectedChatId ? (
+                        <VideoPosterTile
+                          telegramClient={telegramClient}
+                          chatId={selectedChatId}
+                          messageId={file.message_id}
+                          fileName={file.filename}
+                          interactive
+                        />
+                      ) : null
+                    }
+                  />
+                );
+              })}
             </>
           )}
         </div>

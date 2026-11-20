@@ -12,6 +12,7 @@ const VideoPosterTile = ({
   fileName,
   className = '',
   compact = false,
+  interactive = false,
 }) => {
   const rootRef = useRef(null);
   const objectUrlRef = useRef(null);
@@ -136,7 +137,9 @@ const VideoPosterTile = ({
   return (
     <div
       ref={rootRef}
-      className={`video-poster-tile ${compact ? 'video-poster-tile--compact' : ''} ${className}`}
+      className={`video-poster-tile ${compact ? 'video-poster-tile--compact' : ''} ${
+        interactive ? 'video-poster-tile--interactive' : ''
+      } ${className}`}
     >
       {posterUrl ? (
         <img src={posterUrl} alt="" className="video-poster-image" draggable={false} />
@@ -146,9 +149,13 @@ const VideoPosterTile = ({
             isBackfilling ? 'video-poster-placeholder--loading' : ''
           }`}
         >
-          <FaPlay className="video-poster-placeholder-icon" />
+          {!interactive && !compact && (
+            <FaPlay className="video-poster-placeholder-icon" />
+          )}
           {isBackfilling && !compact && (
-            <span className="video-poster-loading-label">Generating…</span>
+            <span className="video-poster-loading-label">
+              {interactive ? 'Loading preview…' : 'Generating…'}
+            </span>
           )}
         </div>
       )}
