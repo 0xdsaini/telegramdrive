@@ -80,68 +80,94 @@ const TelegramMessenger = () => {
   };
 
   const downloadFileandExtractMetadata = async (messageId) => {
-
-    // TODO: Implement Method 1 and Method 2 too above here.
-    // and change this function to full responsibility of findMetadataMessage;
+    const client = clientRef.current || window.tdClient;
+    if (!client || !selectedChatId) {
+      throw new Error('Telegram client or chat is not ready');
+    }
 
     let foundMessage = null;
     let foundId = null;
-    // Method 3: Fallback to getChatHistory if searchChatMessages fails
-    try {
-      console.log("Falling back to getChatHistory...");
-      let fromMessageId = 0;
-      const maxAttempts = 5; // NOTICE: Adjust this later if number of messages starts getting somewhat high(currently, per attempt=50 messages, 5 attempts = 50*5 = 250 messages it'll retrieve only. If your METADATA_STORAGE message is in the beginning of the chat, and you have more than 250 messages after that, you'll miss that METADATA_STORAGE message. If you expect a lot of messages, you SHOULD increase this limit. And this will definitely happen as you start storing files in it more and more and more.)
-      
-      for (let attempt = 0; attempt < maxAttempts && !foundMessage; attempt++) {
-        const historyResult = await clientRef.current.send({
-          "@type": "getChatHistory",
-          "chat_id": selectedChatId,
-          "from_message_id": fromMessageId,
-          "offset": 0,
-          "limit": 50, // Get 50 messages at a time
-          "only_local": false
+
+    const numericMessageId =
+      messageId != null && messageId !== ''
+        ? parseInt(String(messageId), 10)
+        : NaN;
+
+    if (Number.isFinite(numericMessageId)) {
+      try {
+        const messageResult = await client.send({
+          '@type': 'getMessage',
+          chat_id: selectedChatId,
+          message_id: numericMessageId,
         });
-        
-        if (historyResult.messages && historyResult.messages.length > 0) {
-          // Update fromMessageId for next iteration if needed
-          fromMessageId = historyResult.messages[historyResult.messages.length - 1].id;
-          
-          // Search for METADATA_STORAGE in the messages (both in text and document captions)
-          foundMessage = historyResult.messages.find(msg => 
-            (msg.content && 
-             msg.content.document && 
-             msg.content.caption && 
-             msg.content.caption.text && 
-             msg.content.caption.text.includes("METADATA_STORAGE"))
-          );
-          
+        if (messageResult && isMetadataStorageMessage(messageResult)) {
+          foundMessage = messageResult;
+          foundId = messageResult.id;
+        }
+      } catch (getMessageError) {
+        console.error('getMessage failed for metadata message:', getMessageError);
+      }
+    }
+
+    if (!foundMessage) {
+      try {
+        console.log('Falling back to getChatHistory for METADATA_STORAGE...');
+        let fromMessageId = 0;
+        const maxAttempts = 5;
+
+        for (let attempt = 0; attempt < maxAttempts && !foundMessage; attempt++) {
+          const historyResult = await client.send({
+            '@type': 'getChatHistory',
+            chat_id: selectedChatId,
+            from_message_id: fromMessageId,
+            offset: 0,
+            limit: 50,
+            only_local: false,
+          });
+
+          if (!historyResult.messages?.length) {
+            break;
+          }
+
+          fromMessageId =
+            historyResult.messages[historyResult.messages.length - 1].id;
+          foundMessage = historyResult.messages.find(isMetadataStorageMessage);
+
           if (foundMessage) {
             foundId = foundMessage.id;
-            console.log("Found METADATA_STORAGE message with getChatHistory, ID:", foundId);
-            // localStorage.setItem(MESSAGE_ID_KEY, foundId.toString());
+            console.log(
+              'Found METADATA_STORAGE message with getChatHistory, ID:',
+              foundId,
+            );
           }
-          
-          // If we got fewer messages than requested, we've reached the end
+
           if (historyResult.messages.length < 50) {
             break;
           }
-        } else {
-          // No more messages to check
-          break;
         }
+      } catch (historyError) {
+        console.error('Error with getChatHistory:', historyError);
       }
-      
-      // // If we get here, we didn't find the message. --> We'll reach here anyway.
-      // console.log("No METADATA_STORAGE messages found with getChatHistory");
-    } catch (historyError) {
-      console.error('Error with getChatHistory:', historyError);
     }
 
-    setMessageId(foundMessage.id);
+    if (!foundMessage) {
+      throw new Error('METADATA_STORAGE message not found in this chat');
+    }
+
+    const editDateUnix =
+      foundMessage.edit_date > 0 ? foundMessage.edit_date : foundMessage.date;
+
+    if (!foundMessage.content?.document) {
+      const textBody = foundMessage.content?.text?.text;
+      if (!textBody) {
+        throw new Error('METADATA_STORAGE message has no document or text body');
+      }
+      return { text: textBody, id: foundId ?? foundMessage.id, editDateUnix };
+    }
 
     let message = foundMessage;
-    console.log("message", message);
-    
+    console.log('message', message);
+
     let fileId = message.content.document.document.id;
     console.log("messageId", fileId);
     
@@ -216,10 +242,7 @@ const TelegramMessenger = () => {
 
     console.log("inside downloadFileandExtractMetadata, typeof text: ", typeof text);
 
-    const editDateUnix =
-      foundMessage.edit_date > 0 ? foundMessage.edit_date : foundMessage.date;
-
-    return { text, id: foundId, editDateUnix };
+    return { text, id: foundId ?? foundMessage.id, editDateUnix };
   }
 
   const loadFileStructureFromTelegram = (metadataText, editDateUnix) => {
@@ -308,7 +331,7 @@ const TelegramMessenger = () => {
           // Load file structure from message
           try {
             if (true) {
-              const result = await downloadFileandExtractMetadata(1234);
+              const result = await downloadFileandExtractMetadata(foundId);
               console.log("downloadFileandExtractMetadata(inside findMessageId->searchChatMessages)", result.text, typeof result.text);
               const parsedStructure = loadFileStructureFromTelegram(
                 result.text,
@@ -374,7 +397,7 @@ const TelegramMessenger = () => {
               // Load file structure from message
               try {
                 if (true) {
-                  const result = await downloadFileandExtractMetadata(1234);
+                  const result = await downloadFileandExtractMetadata(foundId);
                   console.log("downloadFileandExtractMetadata(inside findMessageId->getChatHistory)", result.text, typeof result.text);
                   const parsedStructure = loadFileStructureFromTelegram(
                     result.text,
@@ -803,6 +826,13 @@ const TelegramMessenger = () => {
     }
   };
 
+  const throwIfTdlibError = (result) => {
+    if (result?.['@type'] === 'error') {
+      throw new Error(result.message || `TDLib error (code ${result.code ?? 'unknown'})`);
+    }
+    return result;
+  };
+
   // Edit an existing message in Telegram
   const editMessage = async (newMessage, message_id, chat_id) => {
     console.log("Editing message with ID:", message_id);
@@ -813,23 +843,25 @@ const TelegramMessenger = () => {
     let message;
 
     try {
-      message = window.tdClient.send({
-        '@type': 'editMessageMedia',
-        'chat_id': chat_id,
-        'message_id': message_id,
-        'input_message_content': {
-          '@type': 'inputMessageDocument',
-          'document': {
-            '@type': 'inputFileBlob',
-            'name': newMetadataFile.name,
-            'data': newMetadataFile
-          },
+      message = throwIfTdlibError(
+        await window.tdClient.send({
+          '@type': 'editMessageMedia',
+          'chat_id': chat_id,
+          'message_id': message_id,
+          'input_message_content': {
+            '@type': 'inputMessageDocument',
+            'document': {
+              '@type': 'inputFileBlob',
+              'name': newMetadataFile.name,
+              'data': newMetadataFile,
+            },
             'caption': {
               '@type': 'formattedText',
-              'text': 'METADATA_STORAGE'
-            }
-        }
-      });
+              'text': 'METADATA_STORAGE',
+            },
+          },
+        }),
+      );
 
       console.log("Message sent just now", message);
 
@@ -861,12 +893,12 @@ const TelegramMessenger = () => {
 
       // TODO: Fix this, Hacky: wait for 1 second before returning
       await new Promise(resolve => setTimeout(resolve, 1000));
-      return messageId;
+      return message;
       
     } catch(error) {
       console.error('Error sending message:', error);
       setStatus('Error sending message');
-      throw error;
+      throw error instanceof Error ? error : new Error(String(error));
     }
 
     try {

@@ -870,7 +870,10 @@ const FileExplorer = () => {
           fileName,
           resolved.messageId,
         );
-        await window.updateTelegramFileStructure?.(updatedStructure);
+        updateFileStructure(updatedStructure);
+        window.updateTelegramFileStructure?.(updatedStructure).catch((syncError) => {
+          console.warn('Background metadata message_id repair failed:', syncError);
+        });
       }
 
       const streamUrl = getStreamUrl({
