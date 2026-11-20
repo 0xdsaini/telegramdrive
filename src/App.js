@@ -9,6 +9,7 @@ import { redirectToAppBaseIfNeeded } from './utils/appBasePath';
 import { registerStreamBridge, setStreamBridgeClient, refreshStreamBridgeAfterIdle } from './utils/streamBridge';
 import { installStreamDebugHelpers } from './utils/streamDebug';
 import { recordAppBoot } from './utils/reloadDebug';
+import { ensureTelegramThumbsStore } from './utils/telegramThumbsStore';
 import MobileReloadDebugPanel from './components/Debug/MobileReloadDebugPanel';
 
 // Component to handle app-level effects
@@ -45,6 +46,15 @@ const AppContent = () => {
   useEffect(() => {
     setStreamBridgeClient(telegramClient);
   }, [telegramClient]);
+
+  useEffect(() => {
+    if (!isConnected || !selectedChatId || !telegramClient || !isFileStructureLoaded) {
+      return;
+    }
+    ensureTelegramThumbsStore(telegramClient, selectedChatId).catch((error) => {
+      console.warn('Failed to load or sync thumbs.db:', error);
+    });
+  }, [isConnected, selectedChatId, telegramClient, isFileStructureLoaded]);
 
   useEffect(() => {
     const bootAt = Date.now();

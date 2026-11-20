@@ -72,20 +72,95 @@ export async function getCachedPoster(chatId, messageId) {
     }),
   );
 
-  if (!record?.blob) {
+  if (record?.blob) {
+    const now = Date.now();
+    await withStore('readwrite', (store) => {
+      store.put({ ...record, accessedAt: now });
+    });
+
+    return {
+      blob: record.blob,
+      durationSec: record.durationSec ?? null,
+      source: record.source || 'cache',
+    };
+  }
+
+  const client = typeof window !== 'undefined' ? window.tdClient : null;
+  if (!client) {
     return null;
   }
 
-  const now = Date.now();
-  await withStore('readwrite', (store) => {
-    store.put({ ...record, accessedAt: now });
+  const { getPosterFromThumbsDb } = await import('./telegramThumbsStore');
+  const fromThumbsDb = await getPosterFromThumbsDb(client, chatId, messageId);
+  if (!fromThumbsDb?.blob) {
+    return null;
+  }
+
+  await setCachedPoster(chatId, messageId, fromThumbsDb.blob, {
+    durationSec: fromThumbsDb.durationSec,
+    source: fromThumbsDb.source,
+    skipTelegram: true,
   });
 
   return {
-    blob: record.blob,
-    durationSec: record.durationSec ?? null,
-    source: record.source || 'cache',
+    blob: fromThumbsDb.blob,
+    durationSec: fromThumbsDb.durationSec ?? null,
+    source: fromThumbsDb.source || 'thumbs-db',
   };
+}
+
+export async function listIndexedDbPostersForChat(chatId) {
+  const prefix = `${chatId}:`;
+  return withStore('readonly', (store) =>
+    new Promise((resolve, reject) => {
+      const out = [];
+      const req = store.openCursor();
+      req.onsuccess = (event) => {
+        const cursor = event.target.result;
+        if (!cursor) {
+          resolve(out);
+          return;
+        }
+        const row = cursor.value;
+        if (row?.key?.startsWith(prefix) && row.blob) {
+          const messageId = parseInt(row.key.slice(prefix.length), 10);
+          if (!Number.isNaN(messageId)) {
+            out.push({
+              messageId,
+              blob: row.blob,
+              durationSec: row.durationSec ?? null,
+              source: row.source || 'cache',
+            });
+          }
+        }
+        cursor.continue();
+      };
+      req.onerror = () => reject(req.error);
+    }),
+  );
+}
+
+/**
+ * When Telegram thumbs.db wins (newer), copy all posters into browser IndexedDB.
+ */
+export async function hydrateIndexedDbFromSqliteThumbs(chatId, sqliteDb) {
+  const { getPosterRow, listPosterKeys } = await import('./thumbsDbSql');
+  const keys = listPosterKeys(sqliteDb);
+  await Promise.all(
+    keys
+      .filter((k) => k.chatId === chatId)
+      .map(async ({ chatId: cId, messageId }) => {
+        const row = getPosterRow(sqliteDb, cId, messageId);
+        if (!row?.blob) {
+          return;
+        }
+        await setCachedPoster(cId, messageId, row.blob, {
+          durationSec: row.durationSec,
+          source: row.source,
+          skipTelegram: true,
+        });
+      }),
+  );
 }
 
 export async function deleteCachedPoster(chatId, messageId) {
@@ -95,7 +170,12 @@ export async function deleteCachedPoster(chatId, messageId) {
   });
 }
 
-export async function setCachedPoster(chatId, messageId, blob, { durationSec = null, source = 'tdlib' } = {}) {
+export async function setCachedPoster(
+  chatId,
+  messageId,
+  blob,
+  { durationSec = null, source = 'tdlib', skipTelegram = false } = {},
+) {
   const key = cacheKey(chatId, messageId);
   const now = Date.now();
 
@@ -125,4 +205,19 @@ export async function setCachedPoster(chatId, messageId, blob, { durationSec = n
       createdAt: existing?.createdAt ?? now,
     });
   });
+
+  if (!skipTelegram) {
+    const client = typeof window !== 'undefined' ? window.tdClient : null;
+    if (client) {
+      try {
+        const { setPosterInThumbsDb } = await import('./telegramThumbsStore');
+        await setPosterInThumbsDb(client, chatId, messageId, blob, {
+          durationSec,
+          source,
+        });
+      } catch (error) {
+        console.warn('Failed to persist poster to thumbs.db:', error);
+      }
+    }
+  }
 }
