@@ -290,38 +290,37 @@ export const moveFolder = (fileStructure, sourcePath, destPath) => {
  * @param {Object} fileStructure - The file structure object
  * @param {string} folderPath - Path to the folder where to add the file
  * @param {string} filename - Name of the file
- * @param {string} messageId - Telegram message ID containing the file
+ * @param {number|string} messageId - Telegram message ID containing the file (unique per chat)
  * @returns {Object} Updated file structure
  */
-function newFileInode() {
-  return `file_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
-}
-
 export const addFile = (fileStructure, folderPath, filename, messageId) => {
   const folder = findFolderByPath(fileStructure, folderPath);
   if (!folder) {
     console.error(`Folder not found: ${folderPath}`);
     return fileStructure;
   }
-  
+
+  const numericMessageId = Number(messageId);
+  if (!Number.isFinite(numericMessageId)) {
+    console.error(`Invalid message_id for addFile: ${messageId}`);
+    return fileStructure;
+  }
+
+  // inode === message_id: TDLib message ids are unique within a chat (chat_id + message_id).
+  const entry = {
+    inode: numericMessageId,
+    filename,
+    message_id: numericMessageId,
+  };
+
   // Check if file already exists
   const existingFileIndex = folder.files.findIndex(f => f.filename === filename);
   if (existingFileIndex !== -1) {
-    // Update existing file
-    folder.files[existingFileIndex] = {
-      inode: newFileInode(),
-      filename,
-      message_id: messageId
-    };
+    folder.files[existingFileIndex] = entry;
   } else {
-    // Add new file
-    folder.files.push({
-      inode: newFileInode(),
-      filename,
-      message_id: messageId
-    });
+    folder.files.push(entry);
   }
-  
+
   return fileStructure;
 };
 
