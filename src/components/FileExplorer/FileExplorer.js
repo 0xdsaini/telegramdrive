@@ -2,9 +2,10 @@ import React, { useState, useRef, useEffect, useContext, useCallback } from 'rea
 import './FileExplorer.css';
 import { FaFile, FaFileImage, FaFileAlt, FaFileCode, FaFolder, FaTrash, FaArrowUp, FaPlus, FaUpload, FaHome, FaCheck, FaDownload, FaPlay } from 'react-icons/fa';
 import VideoPlayerModal from '../VideoPlayer/VideoPlayerModal';
+import VideoPosterTile from './VideoPosterTile';
 import { resolveTelegramFile } from '../../utils/telegramFileResolver';
 import { getStreamUrl } from '../../utils/streamUrl';
-import { isStreamableMediaFileName, mimeTypeFromFileName } from '../../utils/mimeTypes';
+import { isStreamableMediaFileName, isVideoFileName, mimeTypeFromFileName } from '../../utils/mimeTypes';
 import { streamDebug, streamDebugError } from '../../utils/streamDebug';
 import { prepareForStreaming } from '../../utils/streamBridge';
 import { createEmptyFileStructure, findFolderByPath, createFolder, deleteFolder, moveFolder, addFile, deleteFile, moveFile } from '../../utils/fileStructureUtils';
@@ -1692,13 +1693,21 @@ const FileExplorer = () => {
               {currentFolder && currentFolder.files && currentFolder.files.map((file) => (
                 <div 
                   key={file.filename} 
-                  className="file-item"
+                  className={`file-item${isVideoFileName(file.filename) ? ' file-item--video' : ''}`}
                   draggable
                   onDragStart={(e) => {
                     e.dataTransfer.setData('text/plain', `file:${currentPath === '/' ? `/${file.filename}` : `${currentPath}/${file.filename}`}`);
                   }}
                 >
-                  {getFileIcon(file.filename)}
+                  {isVideoFileName(file.filename) && file.message_id && selectedChatId ? (
+                    <VideoPosterTile
+                      telegramClient={telegramClient}
+                      chatId={selectedChatId}
+                      messageId={file.message_id}
+                    />
+                  ) : (
+                    getFileIcon(file.filename)
+                  )}
                   <span className="file-name">{file.filename}</span>
                   {isStreamableMediaFileName(file.filename) && (
                     <button

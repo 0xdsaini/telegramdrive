@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { FaFileAlt, FaCheck, FaPlus, FaEye, FaEyeSlash, FaPlay } from 'react-icons/fa';
+import VideoPosterTile from './VideoPosterTile';
+import { isVideoFileName } from '../../utils/mimeTypes';
 import { TelegramContext } from '../../context/TelegramContext';
 import { findFolderByPath, addFile } from '../../utils/fileStructureUtils';
 import { buildUntrackedFileEntries, mergeChatMediaMessages } from '../../utils/untrackedChatMedia';
@@ -172,9 +174,14 @@ const UntrackedFilesPanel = ({ currentPath, onSuccess, onError }) => {
                   className={`untracked-file-item ${selectedFiles.includes(file.messageId) ? 'selected' : ''}`}
                   onClick={() => toggleFileSelection(file.messageId)}
                 >
-                  <div className="file-icon-container">
-                    {file.mediaType === 'video' ? (
-                      <FaPlay className="file-icon" />
+                  <div className="file-icon-container file-icon-container--poster">
+                    {file.mediaType === 'video' || isVideoFileName(file.filename) ? (
+                      <VideoPosterTile
+                        telegramClient={telegramClient}
+                        chatId={selectedChatId}
+                        messageId={file.messageId}
+                        compact
+                      />
                     ) : (
                       <FaFileAlt className="file-icon" />
                     )}
