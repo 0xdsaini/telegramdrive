@@ -1,4 +1,5 @@
 import { streamDebug, streamDebugError } from './streamDebug';
+import { deriveVideoFileNameFromMessage } from './untrackedChatMedia';
 
 /**
  * Resolve a stored metadata file entry to TDLib file id + size.
@@ -39,9 +40,17 @@ export async function resolveTelegramFile(telegramClient, chatId, fileName, mess
           message = msg;
           break;
         }
-        if (msg.content?.['@type'] === 'messageVideo' && doc?.file_name === fileName) {
-          message = msg;
-          break;
+        if (msg.content?.['@type'] === 'messageVideo') {
+          const video = msg.content.video;
+          const captionDerived = deriveVideoFileNameFromMessage(msg);
+          if (
+            video?.file_name === fileName
+            || captionDerived === fileName
+            || msg.id === messageId
+          ) {
+            message = msg;
+            break;
+          }
         }
         if (msg.content?.['@type'] === 'messageAudio') {
           message = msg;

@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useContext } from 'react';
-import { FaFileAlt, FaCheck, FaPlus, FaEye, FaEyeSlash } from 'react-icons/fa';
+import { FaFileAlt, FaCheck, FaPlus, FaEye, FaEyeSlash, FaPlay } from 'react-icons/fa';
 import { TelegramContext } from '../../context/TelegramContext';
 import { findFolderByPath, addFile } from '../../utils/fileStructureUtils';
+import { buildUntrackedFileEntries, mergeChatMediaMessages } from '../../utils/untrackedChatMedia';
 // Using FileExplorer.css instead of a separate CSS file
 import './FileExplorer.css';
 
@@ -33,44 +34,25 @@ const UntrackedFilesPanel = ({ currentPath, onSuccess, onError }) => {
 
     setIsLoading(true);
     try {
-      // Get all messages with documents in the selected chat
-      const result = await telegramClient.send({
-        '@type': 'searchChatMessages',
-        'chat_id': selectedChatId,
-        'filter': {
-          '@type': 'searchMessagesFilterDocument'
-        },
-        'limit': 100 // Adjust as needed
-      });
+      const [documentResult, videoResult] = await Promise.all([
+        telegramClient.send({
+          '@type': 'searchChatMessages',
+          chat_id: selectedChatId,
+          filter: { '@type': 'searchMessagesFilterDocument' },
+          limit: 100,
+        }),
+        telegramClient.send({
+          '@type': 'searchChatMessages',
+          chat_id: selectedChatId,
+          filter: { '@type': 'searchMessagesFilterVideo' },
+          limit: 100,
+        }),
+      ]);
 
-      if (!result || !result.messages || !Array.isArray(result.messages)) {
-        setUntrackedFiles([]);
-        setIsLoading(false);
-        return;
-      }
-
-      // Get all files from the current folder in the metadata
+      const messages = mergeChatMediaMessages(documentResult, videoResult);
       const currentFolder = findFolderByPath(fileStructure, currentPath);
       const trackedFiles = currentFolder ? currentFolder.files.map(file => file.filename) : [];
-      
-      // Filter out messages that contain documents not in the metadata
-      const untracked = result.messages
-        .filter(message => {
-          // Check if the message has a document
-          if (message.content['@type'] !== 'messageDocument' || !message.content.document) {
-            return false;
-          }
-          
-          const filename = message.content.document.file_name;
-          // Check if this file is not already tracked in the current path
-          return !trackedFiles.includes(filename);
-        })
-        .map(message => ({
-          messageId: message.id,
-          filename: message.content.document.file_name,
-          size: message.content.document.document.size,
-          date: new Date(message.date * 1000).toLocaleString()
-        }));
+      const untracked = buildUntrackedFileEntries(messages, trackedFiles);
 
       setUntrackedFiles(untracked);
     } catch (error) {
@@ -191,7 +173,11 @@ const UntrackedFilesPanel = ({ currentPath, onSuccess, onError }) => {
                   onClick={() => toggleFileSelection(file.messageId)}
                 >
                   <div className="file-icon-container">
-                    <FaFileAlt className="file-icon" />
+                    {file.mediaType === 'video' ? (
+                      <FaPlay className="file-icon" />
+                    ) : (
+                      <FaFileAlt className="file-icon" />
+                    )}
                     {selectedFiles.includes(file.messageId) && (
                       <FaCheck className="selected-icon" />
                     )}
