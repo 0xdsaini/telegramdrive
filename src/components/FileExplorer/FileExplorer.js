@@ -18,7 +18,8 @@ import {
 } from '../../utils/streamBridge';
 import { createEmptyFileStructure, findFolderByPath, createFolder, deleteFolder, moveFolder, addFile, deleteFile, moveFile } from '../../utils/fileStructureUtils';
 import { TelegramContext } from '../../context/TelegramContext';
-import UntrackedFilesPanel from './UntrackedFilesPanel';
+import UntrackedFilesPanel, { useUntrackedFiles } from './UntrackedFilesPanel';
+import UntrackedFilesToggle from './UntrackedFilesToggle';
 
 // (function() {
 //   const originalLog = console.log;
@@ -96,6 +97,12 @@ const FileExplorer = () => {
     (opts) => prepareForStreaming(telegramClient, opts),
     [telegramClient]
   );
+
+  const untrackedFilesState = useUntrackedFiles({
+    currentPath,
+    onSuccess: setSuccess,
+    onError: setError,
+  });
 
   useEffect(() => {
     setPlaybackModalOpen(streamPlayer.open);
@@ -1670,12 +1677,12 @@ const FileExplorer = () => {
             <FaFolder /> New Folder
           </button>
           
-          <UntrackedFilesPanel
-            currentPath={currentPath} 
-            onSuccess={setSuccess} 
-            onError={setError} 
+          <UntrackedFilesToggle
+            isPanelVisible={untrackedFilesState.isPanelVisible}
+            count={untrackedFilesState.untrackedFiles.length}
+            onToggle={untrackedFilesState.togglePanelVisibility}
           />
-          
+
           {uploading && (
             <div className="loading-indicator">
               <div className="spinner"></div>
@@ -1691,6 +1698,14 @@ const FileExplorer = () => {
             multiple
           />
         </div>
+
+        <UntrackedFilesPanel
+          slot="sheet"
+          state={untrackedFilesState}
+          currentPath={currentPath}
+          onSuccess={setSuccess}
+          onError={setError}
+        />
         
         {currentPath !== '/' && (
           <div 
