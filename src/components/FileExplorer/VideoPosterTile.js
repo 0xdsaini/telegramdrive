@@ -1,12 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { FaPlay } from 'react-icons/fa';
 import { resolveVideoPoster } from '../../utils/videoThumbnailResolver';
+import { captureVideoPosterFromStream } from '../../utils/captureVideoPosterFromStream';
 import { formatVideoDuration } from '../../utils/mimeTypes';
 
 const VideoPosterTile = ({
   telegramClient,
   chatId,
   messageId,
+  fileName,
   className = '',
   compact = false,
 }) => {
@@ -15,7 +17,22 @@ const VideoPosterTile = ({
   const [posterUrl, setPosterUrl] = useState(null);
   const [durationSec, setDurationSec] = useState(null);
   const [failed, setFailed] = useState(false);
+  const [isBackfilling, setIsBackfilling] = useState(false);
   const [visible, setVisible] = useState(false);
+
+  const applyPosterBlob = (posterBlob, dur) => {
+    if (!posterBlob) {
+      return;
+    }
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
+    }
+    const url = URL.createObjectURL(posterBlob);
+    objectUrlRef.current = url;
+    setPosterUrl(url);
+    setDurationSec(dur ?? null);
+    setFailed(false);
+  };
 
   useEffect(() => {
     const el = rootRef.current;
@@ -46,31 +63,44 @@ const VideoPosterTile = ({
 
     (async () => {
       try {
-        const { posterBlob, durationSec: dur } = await resolveVideoPoster(
-          telegramClient,
-          chatId,
-          messageId,
-        );
+        const resolved = await resolveVideoPoster(telegramClient, chatId, messageId);
         if (cancelled) {
           return;
         }
-        if (posterBlob) {
-          if (objectUrlRef.current) {
-            URL.revokeObjectURL(objectUrlRef.current);
-          }
-          const url = URL.createObjectURL(posterBlob);
-          objectUrlRef.current = url;
-          setPosterUrl(url);
-          setDurationSec(dur);
-          setFailed(false);
-        } else {
-          setPosterUrl(null);
-          setFailed(true);
+        if (resolved.posterBlob) {
+          applyPosterBlob(resolved.posterBlob, resolved.durationSec);
+          return;
         }
+
+        if (resolved.needsBackfill && fileName) {
+          setIsBackfilling(true);
+          setFailed(false);
+          const backfill = await captureVideoPosterFromStream(
+            telegramClient,
+            chatId,
+            messageId,
+            fileName,
+          );
+          if (cancelled) {
+            return;
+          }
+          if (backfill.posterBlob) {
+            applyPosterBlob(backfill.posterBlob, backfill.durationSec);
+          } else {
+            setPosterUrl(null);
+            setFailed(true);
+          }
+          setIsBackfilling(false);
+          return;
+        }
+
+        setPosterUrl(null);
+        setFailed(true);
       } catch {
         if (!cancelled) {
           setPosterUrl(null);
           setFailed(true);
+          setIsBackfilling(false);
         }
       }
     })();
@@ -82,7 +112,7 @@ const VideoPosterTile = ({
         objectUrlRef.current = null;
       }
     };
-  }, [visible, telegramClient, chatId, messageId]);
+  }, [visible, telegramClient, chatId, messageId, fileName]);
 
   const durationLabel = formatVideoDuration(durationSec);
 
@@ -94,8 +124,15 @@ const VideoPosterTile = ({
       {posterUrl ? (
         <img src={posterUrl} alt="" className="video-poster-image" draggable={false} />
       ) : (
-        <div className={`video-poster-placeholder ${failed ? 'video-poster-placeholder--failed' : ''}`}>
+        <div
+          className={`video-poster-placeholder ${failed ? 'video-poster-placeholder--failed' : ''} ${
+            isBackfilling ? 'video-poster-placeholder--loading' : ''
+          }`}
+        >
           <FaPlay className="video-poster-placeholder-icon" />
+          {isBackfilling && !compact && (
+            <span className="video-poster-loading-label">Generating…</span>
+          )}
         </div>
       )}
       {durationLabel && <span className="video-duration-badge">{durationLabel}</span>}

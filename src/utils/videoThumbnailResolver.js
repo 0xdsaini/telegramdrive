@@ -130,13 +130,20 @@ async function fetchPosterFromTelegram(telegramClient, chatId, messageId) {
   return { posterBlob, durationSec, source };
 }
 
+function wrapPosterResult(result) {
+  return {
+    ...result,
+    needsBackfill: !result.posterBlob,
+  };
+}
+
 /**
  * Resolve a video poster from IndexedDB or Telegram (minithumbnail / document|video thumbnail).
- * @returns {Promise<{ posterBlob: Blob|null, durationSec: number|null, source: string|null }>}
+ * @returns {Promise<{ posterBlob: Blob|null, durationSec: number|null, source: string|null, needsBackfill: boolean }>}
  */
 export async function resolveVideoPoster(telegramClient, chatId, messageId) {
   if (!telegramClient || !chatId || !messageId) {
-    return { posterBlob: null, durationSec: null, source: null };
+    return { posterBlob: null, durationSec: null, source: null, needsBackfill: false };
   }
 
   const cached = await getCachedPoster(chatId, messageId);
@@ -145,6 +152,7 @@ export async function resolveVideoPoster(telegramClient, chatId, messageId) {
       posterBlob: cached.blob,
       durationSec: cached.durationSec,
       source: cached.source,
+      needsBackfill: false,
     };
   }
 
@@ -153,9 +161,9 @@ export async function resolveVideoPoster(telegramClient, chatId, messageId) {
     return inflight.get(key);
   }
 
-  const promise = withConcurrency(() => fetchPosterFromTelegram(telegramClient, chatId, messageId)).finally(
-    () => inflight.delete(key),
-  );
+  const promise = withConcurrency(() => fetchPosterFromTelegram(telegramClient, chatId, messageId))
+    .then(wrapPosterResult)
+    .finally(() => inflight.delete(key));
   inflight.set(key, promise);
   return promise;
 }

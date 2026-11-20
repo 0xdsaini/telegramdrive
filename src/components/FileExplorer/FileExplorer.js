@@ -6,6 +6,8 @@ import VideoPosterTile from './VideoPosterTile';
 import { resolveTelegramFile } from '../../utils/telegramFileResolver';
 import { getStreamUrl } from '../../utils/streamUrl';
 import { isStreamableMediaFileName, isVideoFileName, mimeTypeFromFileName } from '../../utils/mimeTypes';
+import { generateVideoPosterJpeg } from '../../utils/generateVideoPosterJpeg';
+import { setCachedPoster } from '../../utils/thumbnailCache';
 import { streamDebug, streamDebugError } from '../../utils/streamDebug';
 import { prepareForStreaming } from '../../utils/streamBridge';
 import { createEmptyFileStructure, findFolderByPath, createFolder, deleteFolder, moveFolder, addFile, deleteFile, moveFile } from '../../utils/fileStructureUtils';
@@ -598,18 +600,43 @@ const FileExplorer = () => {
           await new Promise(resolve => setTimeout(resolve, 100));
           
           let result;
+          let uploadPoster = null;
+          if (isVideoFileName(file.name)) {
+            try {
+              uploadPoster = await generateVideoPosterJpeg(file);
+            } catch (posterErr) {
+              console.warn(`Poster generation skipped for ${file.name}:`, posterErr);
+            }
+          }
+
+          const inputMessageContent = {
+            '@type': 'inputMessageDocument',
+            document: {
+              '@type': 'inputFileBlob',
+              name: file.name,
+              data: file,
+            },
+            disable_content_type_detection: false,
+          };
+
+          if (uploadPoster?.blob) {
+            inputMessageContent.thumbnail = {
+              '@type': 'inputThumbnail',
+              thumbnail: {
+                '@type': 'inputFileBlob',
+                name: 'thumb.jpg',
+                data: uploadPoster.blob,
+              },
+              width: uploadPoster.width,
+              height: uploadPoster.height,
+            };
+          }
+
           try {
             result = await telegramClient.send({
               '@type': 'sendMessage',
-              'chat_id': selectedChatId,
-              'input_message_content': {
-                '@type': 'inputMessageDocument',
-                'document': {
-                  '@type': 'inputFileBlob',
-                  'name': file.name,
-                  'data': file
-                }
-              }
+              chat_id: selectedChatId,
+              input_message_content: inputMessageContent,
             });
             
             console.log('Upload result:', result);
@@ -620,6 +647,16 @@ const FileExplorer = () => {
           }
           
           if (result && result.id) {
+            if (uploadPoster?.blob) {
+              try {
+                await setCachedPoster(selectedChatId, result.id, uploadPoster.blob, {
+                  durationSec: null,
+                  source: 'upload-jpeg',
+                });
+              } catch (cacheErr) {
+                console.warn('Failed to cache upload poster:', cacheErr);
+              }
+            }
             // Add the file to our file structure
             const updatedStructure = addFile(fileStructure, currentPath, file.name, result.id);
             
@@ -1704,6 +1741,7 @@ const FileExplorer = () => {
                       telegramClient={telegramClient}
                       chatId={selectedChatId}
                       messageId={file.message_id}
+                      fileName={file.filename}
                     />
                   ) : (
                     getFileIcon(file.filename)

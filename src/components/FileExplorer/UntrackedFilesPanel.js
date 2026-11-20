@@ -180,6 +180,7 @@ const UntrackedFilesPanel = ({ currentPath, onSuccess, onError }) => {
                         telegramClient={telegramClient}
                         chatId={selectedChatId}
                         messageId={file.messageId}
+                        fileName={file.filename}
                         compact
                       />
                     ) : (
