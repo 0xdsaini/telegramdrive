@@ -10,7 +10,7 @@ import { streamDebug, streamDebugError } from './streamDebug';
 let registered = false;
 let activeClient = null;
 let registrationRef = null;
-const STREAM_SW_REV = 6;
+const STREAM_SW_REV = 7;
 const partRequestChains = new Map();
 
 function withFilePartQueue(fileId, task) {
@@ -141,7 +141,7 @@ async function handleStreamRequest(event) {
   const { fileId, size, offset, limit, fromPreload } = payload;
   const t0 = performance.now();
 
-  withFilePartQueue(fileId, async () => {
+  await withFilePartQueue(fileId, async () => {
     try {
       const bytes = await requestTdlibFilePart(activeClient, fileId, size, offset, limit, {
         fromPreload: !!fromPreload,

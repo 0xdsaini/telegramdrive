@@ -2,9 +2,9 @@
 /**
  * Telegram Web K–style media streaming (service worker + HTTP Range).
  * File bytes are fetched from the page via TDLib (downloadFile + readFilePart).
- * STREAM_SW_REV=6 — TDLib: sequential 1 MiB parts (no single 2 MiB downloadFile).
+ * STREAM_SW_REV=7 — TDLib: no downloadFile nudge while active download progresses.
  */
-const STREAM_SW_REV = 6;
+const STREAM_SW_REV = 7;
 
 const STREAM_CHUNK_MIDDLE_LIMIT = 512 * 1024;
 const STREAM_CHUNK_UPPER_LIMIT = 1024 * 1024;
@@ -123,7 +123,7 @@ async function requestFilePartFromPage(info, alignedOffset, limit, fromPreload =
 
   const deferred = new Promise((resolve, reject) => {
     const channel = new MessageChannel();
-    const timeoutMs = Math.min(300_000, 60_000 + Math.floor((limit / (512 * 1024)) * 30_000));
+    const timeoutMs = Math.min(600_000, 120_000 + Math.floor((limit / (512 * 1024)) * 45_000));
     const timer = setTimeout(() => reject(new Error('STREAM_REQUEST_PART timeout')), timeoutMs);
     channel.port1.onmessage = (event) => {
       clearTimeout(timer);

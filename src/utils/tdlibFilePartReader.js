@@ -51,9 +51,22 @@ function parsePrefixSize(result) {
     return 0;
   }
   if (result['@type'] === 'fileDownloadedPrefixSize') {
-    return result.size ?? 0;
+    return result.size ?? result.count ?? 0;
   }
   return result.size ?? result.count ?? 0;
+}
+
+/** Prefix bytes readable from `offset` (API + localFile when TDLib download is aligned). */
+function prefixFromFileLocal(local, offset) {
+  if (!local || local.is_downloading_completed) {
+    return 0;
+  }
+  const downloadOffset = local.download_offset ?? 0;
+  const localPrefix = local.downloaded_prefix_size ?? 0;
+  if (downloadOffset === offset) {
+    return localPrefix;
+  }
+  return 0;
 }
 
 async function getDownloadedPrefixSize(client, fileId, offset) {
@@ -62,10 +75,18 @@ async function getDownloadedPrefixSize(client, fileId, offset) {
     file_id: fileId,
     offset,
   });
-  const size = parsePrefixSize(result);
+  let size = parsePrefixSize(result);
   streamDebug('tdlib', 'getFileDownloadedPrefixSize', { fileId, offset, size, result });
   if (result?.['@type'] === 'error') {
     throw new Error(result.message || 'getFileDownloadedPrefixSize failed');
+  }
+  if (size <= 0) {
+    const file = await client.send({ '@type': 'getFile', file_id: fileId });
+    const fromLocal = prefixFromFileLocal(file?.local, offset);
+    if (fromLocal > size) {
+      size = fromLocal;
+      streamDebug('tdlib', 'getFileDownloadedPrefixSize (local)', { fileId, offset, size, fromLocal });
+    }
   }
   return size;
 }
@@ -75,21 +96,19 @@ async function waitForContiguousBytes(
   fileId,
   offset,
   neededSize,
-  { priority = PRIORITY_PLAYBACK, allowNudge = true } = {}
+  { priority = PRIORITY_PLAYBACK, allowNudge = true, maxWaitMs } = {}
 ) {
-  const deadline = Date.now() + waitMsForByteCount(neededSize);
+  const deadline = Date.now() + (maxWaitMs ?? waitMsForByteCount(neededSize));
   let polls = 0;
   let lastPrefix = -1;
   let stallTicks = 0;
+  let lastDownloadedSize = -1;
+  let nudgedThisWait = false;
+  /** TDLib cancels an in-flight downloadFile when another is sent — do not nudge while bytes are growing. */
+  const STALL_POLLS_BEFORE_NUDGE = 25;
 
   while (Date.now() < deadline) {
     polls += 1;
-    const prefix = await getDownloadedPrefixSize(client, fileId, offset);
-    if (prefix >= neededSize) {
-      streamDebug('tdlib', 'waitForContiguousBytes OK', { fileId, offset, neededSize, prefix, polls });
-      return prefix;
-    }
-
     const file = await client.send({
       '@type': 'getFile',
       file_id: fileId,
@@ -101,22 +120,56 @@ async function waitForContiguousBytes(
       return Math.max(finalPrefix, neededSize);
     }
 
+    const apiPrefix = await getDownloadedPrefixSize(client, fileId, offset);
+    const localPrefix = prefixFromFileLocal(file?.local, offset);
+    const prefix = Math.max(apiPrefix, localPrefix);
+
+    if (prefix >= neededSize) {
+      streamDebug('tdlib', 'waitForContiguousBytes OK', { fileId, offset, neededSize, prefix, polls });
+      return prefix;
+    }
+
+    const downloaded = file?.local?.downloaded_size ?? 0;
+    const makingProgress = downloaded > lastDownloadedSize;
+    if (makingProgress) {
+      lastDownloadedSize = downloaded;
+    }
+
     if (prefix === lastPrefix) {
       stallTicks += 1;
-      if (allowNudge && stallTicks >= 8 && file?.local?.is_downloading_active) {
-        const chunk = Math.min(neededSize - prefix, TDLIB_PART_BYTES);
-        if (chunk > 0) {
-          streamDebug('tdlib', 'stall nudge downloadFile', { fileId, offset, prefix, neededSize, chunk });
-          await requestRangeDownload(client, fileId, offset + prefix, chunk, {
-            synchronous: false,
-            priority,
-          });
-        }
-        stallTicks = 0;
-      }
     } else {
       stallTicks = 0;
       lastPrefix = prefix;
+      nudgedThisWait = false;
+    }
+
+    const downloadActive = !!file?.local?.is_downloading_active;
+    if (
+      allowNudge &&
+      !nudgedThisWait &&
+      stallTicks >= STALL_POLLS_BEFORE_NUDGE &&
+      (!downloadActive || (!makingProgress && stallTicks >= STALL_POLLS_BEFORE_NUDGE * 2))
+    ) {
+      const chunk = Math.min(neededSize - prefix, TDLIB_PART_BYTES);
+      if (chunk > 0) {
+        streamDebug('tdlib', 'stall nudge downloadFile', {
+          fileId,
+          offset,
+          prefix,
+          neededSize,
+          chunk,
+          downloadActive,
+          downloaded,
+        });
+        await requestRangeDownload(client, fileId, offset + prefix, chunk, {
+          synchronous: false,
+          priority,
+        });
+        nudgedThisWait = true;
+        stallTicks = 0;
+      }
+    } else if (makingProgress && downloadActive) {
+      stallTicks = Math.max(0, stallTicks - 2);
     }
 
     if (polls % 10 === 0) {
@@ -124,8 +177,9 @@ async function waitForContiguousBytes(
         polls,
         prefix,
         neededSize,
-        downloading: file?.local?.is_downloading_active,
-        downloaded: file?.local?.downloaded_size,
+        downloading: downloadActive,
+        downloaded,
+        downloadOffset: file?.local?.download_offset,
       });
     }
 
@@ -189,10 +243,30 @@ async function ensureRangeDownloaded(client, fileId, offset, count, { priority =
       synchronous: false,
       priority,
     });
-    await waitForContiguousBytes(client, fileId, offset, prefix + partLimit, {
-      priority,
-      allowNudge: true,
-    });
+
+    try {
+      await waitForContiguousBytes(client, fileId, offset, prefix + partLimit, {
+        priority,
+        allowNudge: true,
+        maxWaitMs: 75_000,
+      });
+    } catch (waitError) {
+      streamDebug('tdlib', 'async wait short — trying sync downloadFile', {
+        fileId,
+        offset,
+        prefix,
+        partLimit,
+        err: waitError.message,
+      });
+      await requestRangeDownload(client, fileId, offset + prefix, partLimit, {
+        synchronous: true,
+        priority,
+      });
+      await waitForContiguousBytes(client, fileId, offset, prefix + partLimit, {
+        priority,
+        allowNudge: false,
+      });
+    }
 
     const next = await getDownloadedPrefixSize(client, fileId, offset);
     if (next <= prefix) {
