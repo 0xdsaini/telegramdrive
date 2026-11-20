@@ -111,6 +111,36 @@ export const serializeFileStructure = (fileStructure) => {
  * @param {string} path - Path to the folder (e.g., "/Home/Documents")
  * @returns {Object|null} The folder object or null if not found
  */
+/**
+ * All Telegram message IDs referenced in metadata, anywhere in the tree.
+ * @param {Object} fileStructure
+ * @returns {Set<number>}
+ */
+export const collectTrackedMessageIds = (fileStructure) => {
+  const ids = new Set();
+
+  const walk = (node) => {
+    if (!node) {
+      return;
+    }
+    for (const file of node.files || []) {
+      const messageId = file?.message_id;
+      if (messageId != null && messageId !== '') {
+        const numericId = Number(messageId);
+        if (!Number.isNaN(numericId)) {
+          ids.add(numericId);
+        }
+      }
+    }
+    for (const subfolder of node.subfolders || []) {
+      walk(subfolder);
+    }
+  };
+
+  walk(fileStructure);
+  return ids;
+};
+
 export const findFolderByPath = (fileStructure, path) => {
   if (path === '/' || path === '') {
     return fileStructure;

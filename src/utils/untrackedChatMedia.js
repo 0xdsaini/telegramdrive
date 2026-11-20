@@ -119,8 +119,15 @@ function nextUnnamedVideoIndex(trackedFilenames) {
 
 /**
  * Merge document + video search results and build untracked entries for the current folder.
+ * @param {object[]} messages
+ * @param {string[]} trackedFilenames - filenames already tracked in the current folder
+ * @param {Set<number>} [trackedMessageIds] - message IDs tracked anywhere in metadata
  */
-export function buildUntrackedFileEntries(messages, trackedFilenames) {
+export function buildUntrackedFileEntries(
+  messages,
+  trackedFilenames,
+  trackedMessageIds = new Set(),
+) {
   const trackedSet = new Set(trackedFilenames);
   const usedNames = new Set(trackedFilenames);
   const entries = [];
@@ -130,6 +137,10 @@ export function buildUntrackedFileEntries(messages, trackedFilenames) {
 
   for (const message of messages) {
     if (!message?.content || isMetadataStorageMessage(message)) {
+      continue;
+    }
+
+    if (message.id != null && trackedMessageIds.has(Number(message.id))) {
       continue;
     }
 

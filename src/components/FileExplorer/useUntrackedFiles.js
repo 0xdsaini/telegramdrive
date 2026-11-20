@@ -1,6 +1,10 @@
 import { useState, useEffect, useCallback, useContext } from 'react';
 import { TelegramContext } from '../../context/TelegramContext';
-import { findFolderByPath, addFile } from '../../utils/fileStructureUtils';
+import {
+  findFolderByPath,
+  addFile,
+  collectTrackedMessageIds,
+} from '../../utils/fileStructureUtils';
 import { buildUntrackedFileEntries, mergeChatMediaMessages } from '../../utils/untrackedChatMedia';
 
 export function useUntrackedFiles({ currentPath, onSuccess, onError }) {
@@ -52,8 +56,15 @@ export function useUntrackedFiles({ currentPath, onSuccess, onError }) {
 
       const messages = mergeChatMediaMessages(documentResult, videoResult);
       const currentFolder = findFolderByPath(fileStructure, currentPath);
-      const trackedFiles = currentFolder ? currentFolder.files.map((file) => file.filename) : [];
-      const untracked = buildUntrackedFileEntries(messages, trackedFiles);
+      const trackedFilenames = currentFolder
+        ? currentFolder.files.map((file) => file.filename)
+        : [];
+      const trackedMessageIds = collectTrackedMessageIds(fileStructure);
+      const untracked = buildUntrackedFileEntries(
+        messages,
+        trackedFilenames,
+        trackedMessageIds,
+      );
 
       setUntrackedFiles(untracked);
       setSelectedFiles((prev) => prev.filter((id) => untracked.some((f) => f.messageId === id)));
