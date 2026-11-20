@@ -99,7 +99,11 @@ export async function captureVideoPosterFromStream(
       return { posterBlob: null, durationSec: null, skipped: true };
     }
 
-    await prepareForStreaming(telegramClient, { force: false });
+    try {
+      await prepareForStreaming(telegramClient, { force: false, allowReload: false });
+    } catch {
+      return { posterBlob: null, durationSec: null, skipped: true };
+    }
 
     const mimeType = mimeTypeFromFileName(fileName);
     const streamUrl = getStreamUrl({

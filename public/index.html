@@ -31,13 +31,66 @@
   </head>
   <body>
     <script>
+      (function tgDriveReloadDebugInline() {
+        var EVENTS_KEY = 'tg-drive-debug-events';
+        function navType() {
+          try {
+            var n = performance.getEntriesByType('navigation')[0];
+            return n && n.type ? n.type : 'unknown';
+          } catch (e) {
+            return 'unknown';
+          }
+        }
+        function noSwReload() {
+          try {
+            if (location.search.indexOf('noSwReload=1') !== -1) {
+              localStorage.setItem('tg-drive-no-sw-reload', '1');
+              return true;
+            }
+            return localStorage.getItem('tg-drive-no-sw-reload') === '1';
+          } catch (e) {
+            return false;
+          }
+        }
+        function record(type, detail) {
+          try {
+            var events = JSON.parse(localStorage.getItem(EVENTS_KEY) || '[]');
+            events.push({
+              t: new Date().toISOString(),
+              type: type,
+              detail: detail || {},
+            });
+            if (events.length > 200) events = events.slice(-200);
+            localStorage.setItem(EVENTS_KEY, JSON.stringify(events));
+          } catch (e) {}
+        }
+        record('html_page_load', {
+          nav: navType(),
+          hasSwController: !!(navigator.serviceWorker && navigator.serviceWorker.controller),
+          noSwReload: noSwReload(),
+          href: location.href,
+          ua: navigator.userAgent,
+        });
+        window.__tgDriveRecordReloadEvent = record;
+        window.__tgDriveNoSwReload = noSwReload;
+      })();
+    </script>
+    <script>
+      function tgDriveResolveAppBasePath() {
+        var baked = '%PUBLIC_URL%';
+        if (baked && baked !== '.' && baked.indexOf('PUBLIC_URL') === -1) {
+          return baked.replace(/\/$/, '');
+        }
+        var parts = location.pathname.split('/').filter(Boolean);
+        if (parts.length === 0 || parts[0] === 'stream') return '';
+        return '/' + parts[0];
+      }
       (function bootstrapStreamServiceWorker() {
         if (!('serviceWorker' in navigator)) return;
-        var swUrl = '%PUBLIC_URL%/progressive-sw.js?rev=7';
-        if (!swUrl.startsWith('http')) {
-          swUrl = new URL(swUrl.replace(/^\.\//, '/'), window.location.origin).href;
-        }
-        var scope = new URL('.', swUrl).href;
+        var base = tgDriveResolveAppBasePath();
+        var swPath = (base ? base : '') + '/progressive-sw.js?rev=7';
+        var swUrl = new URL(swPath, window.location.origin).href;
+        var scope = new URL((base ? base + '/' : '/'), window.location.origin).href;
         navigator.serviceWorker.register(swUrl, { scope: scope, updateViaCache: 'none' }).then(function (reg) {
           function pokeClaim() {
             var worker = reg.active || reg.waiting || reg.installing;
@@ -47,19 +100,55 @@
           if (navigator.serviceWorker.controller) return;
           pokeClaim();
           reg.addEventListener('updatefound', function () { pokeClaim(); });
-          var bootKey = 'stream-sw-early-claim';
+          var bootKey = 'stream-sw-reload-attempted';
+          var maxReloads = 2;
           navigator.serviceWorker.ready.then(function () {
             if (navigator.serviceWorker.controller) return;
             pokeClaim();
             setTimeout(function () {
               if (navigator.serviceWorker.controller) return;
               pokeClaim();
-              if (sessionStorage.getItem(bootKey)) return;
-              sessionStorage.setItem(bootKey, '1');
+              var raw = sessionStorage.getItem(bootKey);
+              var count = parseInt(raw || '0', 10);
+              if (!Number.isFinite(count)) count = raw === '1' ? 1 : 0;
+              if (window.__tgDriveNoSwReload && window.__tgDriveNoSwReload()) {
+                if (window.__tgDriveRecordReloadEvent) {
+                  window.__tgDriveRecordReloadEvent('reload_blocked', {
+                    source: 'index.html:bootstrap-no-controller',
+                    count: count,
+                  });
+                }
+                return;
+              }
+              if (count >= maxReloads) {
+                if (window.__tgDriveRecordReloadEvent) {
+                  window.__tgDriveRecordReloadEvent('reload_skipped_max', {
+                    source: 'index.html:bootstrap-no-controller',
+                    count: count,
+                  });
+                }
+                return;
+              }
+              sessionStorage.setItem(bootKey, String(count + 1));
+              if (window.__tgDriveRecordReloadEvent) {
+                window.__tgDriveRecordReloadEvent('reload_scheduled', {
+                  source: 'index.html:bootstrap-no-controller',
+                  count: count + 1,
+                });
+              }
               window.location.reload();
             }, 400);
           });
-        }).catch(function () {});
+        }).catch(function (err) {
+          if (window.__tgDriveRecordReloadEvent) {
+            window.__tgDriveRecordReloadEvent('sw_register_failed', {
+              base: base,
+              swUrl: swUrl,
+              scope: scope,
+              message: err && err.message ? err.message : String(err),
+            });
+          }
+        });
       })();
     </script>
     <script src="%PUBLIC_URL%/tdweb.js"></script>

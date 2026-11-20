@@ -1,0 +1,75 @@
+.mobile-reload-debug-fab {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  z-index: 10050;
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 22px;
+  font-size: 11px;
+  font-weight: 700;
+  background: #1a1a1a;
+  color: #fff;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  opacity: 0.85;
+}
+
+.mobile-reload-debug-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10060;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: flex-end;
+}
+
+.mobile-reload-debug-sheet {
+  width: 100%;
+  max-height: 85vh;
+  background: #fff;
+  border-radius: 12px 12px 0 0;
+  padding: 16px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mobile-reload-debug-title {
+  margin: 0;
+  font-size: 18px;
+}
+
+.mobile-reload-debug-hint {
+  margin: 0;
+  font-size: 13px;
+  color: #444;
+  line-height: 1.4;
+}
+
+.mobile-reload-debug-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mobile-reload-debug-actions button {
+  font-size: 14px;
+  padding: 8px 12px;
+}
+
+.mobile-reload-debug-copy-hint {
+  margin: 0;
+  font-size: 13px;
+  color: #0066aa;
+}
+
+.mobile-reload-debug-textarea {
+  width: 100%;
+  flex: 1;
+  min-height: 180px;
+  font-size: 11px;
+  font-family: ui-monospace, monospace;
+  box-sizing: border-box;
+}

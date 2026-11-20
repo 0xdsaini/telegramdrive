@@ -7,6 +7,8 @@ import TelegramMessenger from './components/TelegramMessenger/TelegramMessenger'
 import { TelegramProvider, useTelegram } from './context/TelegramContext';
 import { registerStreamBridge, setStreamBridgeClient, refreshStreamBridgeAfterIdle } from './utils/streamBridge';
 import { installStreamDebugHelpers } from './utils/streamDebug';
+import { recordAppBoot } from './utils/reloadDebug';
+import MobileReloadDebugPanel from './components/Debug/MobileReloadDebugPanel';
 
 // Component to handle app-level effects
 const AppContent = () => {
@@ -33,6 +35,7 @@ const AppContent = () => {
   }, [clearDownloadedFiles]);
 
   useEffect(() => {
+    recordAppBoot();
     installStreamDebugHelpers();
     registerStreamBridge();
   }, []);
@@ -82,6 +85,7 @@ const AppContent = () => {
   
   return (
     <div className="app-container">
+      <MobileReloadDebugPanel />
       {renderHiddenTelegramMessenger()}
       
       {!isAuthenticated ? (

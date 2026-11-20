@@ -6,6 +6,7 @@ import {
   prioritizeStreamingDownloads,
 } from './tdlibFilePartReader';
 import { streamDebug, streamDebugError } from './streamDebug';
+import { isNoSwReloadEnabled, recordDebugEvent } from './reloadDebug';
 
 let registered = false;
 let activeClient = null;
@@ -91,6 +92,27 @@ export function isStreamServiceWorkerControlling() {
 }
 
 const STREAM_SW_RELOAD_KEY = 'stream-sw-reload-attempted';
+const STREAM_SW_MAX_RELOADS = 2;
+
+function getStreamSwReloadCount() {
+  try {
+    const raw = sessionStorage.getItem(STREAM_SW_RELOAD_KEY);
+    if (!raw) return 0;
+    const n = parseInt(raw, 10);
+    if (Number.isFinite(n)) return n;
+    return raw === '1' ? 1 : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function incrementStreamSwReloadCount() {
+  try {
+    sessionStorage.setItem(STREAM_SW_RELOAD_KEY, String(getStreamSwReloadCount() + 1));
+  } catch {
+    /* ignore */
+  }
+}
 
 function clearStreamSwReloadFlag() {
   try {
@@ -128,11 +150,34 @@ async function requestForceClaim(registration) {
   await waitForControllerOnly(2500);
 }
 
-function reloadForServiceWorkerControl() {
-  streamDebug('bridge', 'reloadForServiceWorkerControl');
-  clearStreamSwReloadFlag();
-  sessionStorage.removeItem('stream-sw-early-claim');
+/** @returns {boolean} whether a reload was started */
+function reloadForServiceWorkerControl(source = 'streamBridge:unspecified') {
+  const count = getStreamSwReloadCount();
+  const sw = {
+    hasController: !!navigator.serviceWorker?.controller,
+    active: registrationRef?.active?.state,
+    waiting: registrationRef?.waiting?.state,
+    installing: registrationRef?.installing?.state,
+  };
+
+  if (isNoSwReloadEnabled()) {
+    streamDebug('bridge', 'reload BLOCKED (noSwReload)', { source, count, sw });
+    recordDebugEvent('reload_blocked', { source, count, sw, reason: 'noSwReload' });
+    return false;
+  }
+
+  if (count >= STREAM_SW_MAX_RELOADS) {
+    streamDebug('bridge', 'reloadForServiceWorkerControl skipped (max reloads)', { source, count, sw });
+    recordDebugEvent('reload_skipped_max', { source, count, sw });
+    return false;
+  }
+
+  incrementStreamSwReloadCount();
+  const nextCount = getStreamSwReloadCount();
+  streamDebug('bridge', 'reloadForServiceWorkerControl', { source, count: nextCount, sw });
+  recordDebugEvent('reload_scheduled', { source, count: nextCount, sw });
   window.location.reload();
+  return true;
 }
 
 /** Poll until this document has an active controller (no reload side effects). */
@@ -227,7 +272,7 @@ export async function reclaimStreamServiceWorker({ hard = false } = {}) {
 
     if (registrationRef?.active) {
       streamDebug('bridge', 'reclaim: active SW, still no controller — reloading');
-      reloadForServiceWorkerControl();
+      reloadForServiceWorkerControl('reclaimStreamServiceWorker:active-still-no-controller');
       await new Promise(() => {});
     }
 
@@ -246,7 +291,7 @@ export async function reclaimStreamServiceWorker({ hard = false } = {}) {
 /**
  * Streaming only works when progressive-sw.js intercepts /stream/ fetches.
  */
-export async function waitForStreamServiceWorkerControl({ timeoutMs = 8000 } = {}) {
+export async function waitForStreamServiceWorkerControl({ timeoutMs = 8000, allowReload = true } = {}) {
   if (!('serviceWorker' in navigator)) {
     throw new Error('Service workers are not supported in this browser.');
   }
@@ -275,19 +320,22 @@ export async function waitForStreamServiceWorkerControl({ timeoutMs = 8000 } = {
     return;
   }
 
-  if (registrationRef?.active) {
-    streamDebug('bridge', 'active SW without controller — reload to attach');
-    reloadForServiceWorkerControl();
-    throw new Error('Reloading to attach stream worker… press Play again right after the page loads.');
+  if (!allowReload) {
+    throw new Error('Stream worker is not attached to this tab yet.');
   }
 
-  if (!sessionStorage.getItem(STREAM_SW_RELOAD_KEY)) {
-    sessionStorage.setItem(STREAM_SW_RELOAD_KEY, '1');
-    streamDebug('bridge', 'no active SW — reloading once');
-    reloadForServiceWorkerControl();
-    throw new Error(
-      'Activating stream worker — reloading this tab once. After the reload, press Play again.'
-    );
+  if (registrationRef?.active) {
+    streamDebug('bridge', 'active SW without controller — reload to attach');
+    if (reloadForServiceWorkerControl('waitForStreamServiceWorkerControl:active-no-controller')) {
+      throw new Error('Reloading to attach stream worker… press Play again right after the page loads.');
+    }
+  } else {
+    streamDebug('bridge', 'no active SW — try reload if under cap');
+    if (reloadForServiceWorkerControl('waitForStreamServiceWorkerControl:no-active-sw')) {
+      throw new Error(
+        'Activating stream worker — reloading this tab once. After the reload, press Play again.'
+      );
+    }
   }
 
   streamDebug('bridge', 'prior reload did not help — hard reclaim');
@@ -380,7 +428,10 @@ async function assertTdlibResponsive(client, timeoutMs = 10_000) {
 /**
  * Re-claim the stream service worker and verify TDLib before playback (idle tabs often lose SW control).
  */
-export async function prepareForStreaming(telegramClient, { timeoutMs = 15_000, force = false } = {}) {
+export async function prepareForStreaming(
+  telegramClient,
+  { timeoutMs = 15_000, force = false, allowReload = true } = {},
+) {
   if (telegramClient) {
     setStreamBridgeClient(telegramClient);
   }
@@ -397,8 +448,14 @@ export async function prepareForStreaming(telegramClient, { timeoutMs = 15_000, 
     return;
   }
 
+  recordDebugEvent('prepare_for_streaming', {
+    force,
+    allowReload,
+    hasController: !!navigator.serviceWorker?.controller,
+  });
+
   await ensureStreamBridgeRegistered();
-  await waitForStreamServiceWorkerControl({ timeoutMs });
+  await waitForStreamServiceWorkerControl({ timeoutMs, allowReload });
 
   if (!navigator.serviceWorker?.controller) {
     lastPrepareAt = 0;
@@ -496,6 +553,12 @@ async function ensureStreamBridgeRegistered() {
       }
     } catch (error) {
       streamDebugError('bridge', 'Service worker registration failed', error);
+      recordDebugEvent('sw_register_failed', {
+        swUrl,
+        scope,
+        base: getAppBasePath(),
+        message: error?.message || String(error),
+      });
       throw error;
     }
   } else if (!registrationRef) {
@@ -506,7 +569,8 @@ async function ensureStreamBridgeRegistered() {
 export async function registerStreamBridge() {
   try {
     await ensureStreamBridgeRegistered();
-    await waitForStreamServiceWorkerControl({ timeoutMs: 3000 });
+    await requestForceClaim(registrationRef);
+    await waitForControllerOnly(3000);
   } catch (error) {
     streamDebugError('bridge', 'registerStreamBridge', error);
   }
