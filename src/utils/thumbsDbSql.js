@@ -107,11 +107,16 @@ export function ensureThumbsUpdatedAtFromTelegram(db, editDateUnix) {
 }
 
 export function getPosterRow(db, chatId, messageId) {
+  const cId = Number(chatId);
+  const mId = Number(messageId);
+  if (!Number.isFinite(cId) || !Number.isFinite(mId)) {
+    return null;
+  }
   const stmt = db.prepare(
     `SELECT jpeg, duration_sec, source FROM posters WHERE chat_id = ? AND message_id = ?`,
   );
   try {
-    stmt.bind([chatId, messageId]);
+    stmt.bind([cId, mId]);
     if (!stmt.step()) {
       return null;
     }
@@ -137,12 +142,17 @@ export async function setPosterRow(
   blob,
   { durationSec = null, source = 'client-stream' } = {},
 ) {
+  const cId = Number(chatId);
+  const mId = Number(messageId);
+  if (!Number.isFinite(cId) || !Number.isFinite(mId)) {
+    return;
+  }
   const buffer = await blob.arrayBuffer();
   const jpeg = new Uint8Array(buffer);
   db.run(
     `INSERT OR REPLACE INTO posters (chat_id, message_id, jpeg, duration_sec, source)
      VALUES (?, ?, ?, ?, ?)`,
-    [chatId, messageId, jpeg, durationSec, source],
+    [cId, mId, jpeg, durationSec, source],
   );
   setThumbsUpdatedAt(db);
 }

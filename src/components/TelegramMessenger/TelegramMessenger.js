@@ -11,7 +11,25 @@ import {
 import React, { useState, useEffect, useRef, useCallback, useContext } from 'react';
 import ChatGroupSelector from '../ChatGroupSelector/ChatGroupSelector';
 import { TelegramContext } from '../../context/TelegramContext';
+import { runChatStorageBootstrap } from '../../utils/chatBootstrap';
 import './TelegramMessenger.css';
+
+const METADATA_MARKER = 'METADATA_STORAGE';
+
+function isMetadataStorageMessage(message) {
+  if (!message?.content) {
+    return false;
+  }
+  const textBody = message.content.text?.text;
+  if (textBody?.includes(METADATA_MARKER)) {
+    return true;
+  }
+  const caption = message.content.caption?.text;
+  if (caption?.includes(METADATA_MARKER)) {
+    return true;
+  }
+  return message.content.document?.file_name === 'metadata.json';
+}
 
 const TelegramMessenger = () => {
   // State for message input and status
@@ -33,14 +51,16 @@ const TelegramMessenger = () => {
   const clientRef = useRef(null);
   const getChatsPromiseRef = useRef(null);
   const inputRef = useRef(null);
+  const bootstrapGenerationRef = useRef(0);
   
   // Message ID for editing messages
   const [messageId, setMessageId] = useState(null);
   
   // Access the Telegram context
   const { 
-    setFileStructure, 
+    setFileStructure,
     setIsFileStructureLoaded,
+    setIsThumbsStoreLoaded,
     setTelegramClient,
     setIsConnected: setContextIsConnected,
     setMessageId: setContextMessageId,
@@ -228,26 +248,31 @@ const TelegramMessenger = () => {
             "message_id": parseInt(savedMessageId, 10)
           });
           
-          if (messageResult && 
-              messageResult.content && 
-              messageResult.content.text && 
-              messageResult.content.text.text && 
-              messageResult.content.text.text.includes("METADATA_STORAGE")) {
-            
+          if (messageResult && isMetadataStorageMessage(messageResult)) {
             console.log("Verified saved message ID is valid:", savedMessageId);
-            setMessageId(parseInt(savedMessageId, 10));
-            setContextMessageId(parseInt(savedMessageId, 10));
-            
-            // Load file structure from message
+            const numericId = parseInt(savedMessageId, 10);
+            setMessageId(numericId);
+            setContextMessageId(numericId);
+
             try {
-              const parsedStructure = parseFileStructure(messageResult.content.text.text);
-              console.log("Loaded file structure from saved message ID:", parsedStructure);
-              setFileStructure(parsedStructure);
+              if (messageResult.content?.document) {
+                const result = await downloadFileandExtractMetadata(numericId);
+                const parsedStructure = loadFileStructureFromTelegram(
+                  result.text,
+                  result.editDateUnix,
+                );
+                setFileStructure(parsedStructure);
+              } else {
+                const parsedStructure = parseFileStructure(
+                  messageResult.content.text.text,
+                );
+                setFileStructure(parsedStructure);
+              }
               setIsFileStructureLoaded(true);
-              return parseInt(savedMessageId, 10);
+              console.log("Loaded file structure from saved message ID");
+              return numericId;
             } catch (parseError) {
               console.error("Error parsing file structure from saved message:", parseError);
-              // Continue to search methods if parsing fails
             }
           } else {
             console.log("Saved message ID is no longer valid, will search again");
@@ -395,7 +420,38 @@ const TelegramMessenger = () => {
       setIsFileStructureLoaded(true);
       return null;
     }
-  }, [selectedChatId]);
+  }, [selectedChatId, setContextMessageId, setFileStructure, setIsFileStructureLoaded]);
+
+  const runChatBootstrap = useCallback(async () => {
+    if (!clientRef.current || !selectedChatId) {
+      return;
+    }
+    const generation = (bootstrapGenerationRef.current += 1);
+    setIsThumbsStoreLoaded(false);
+    const thumbsUiWait = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    try {
+      await runChatStorageBootstrap({
+        loadMetadata: findMessageId,
+        client: clientRef.current,
+        chatId: selectedChatId,
+      });
+      console.log(
+        '[thumbs-boot] ui-ready',
+        Math.round(
+          (typeof performance !== 'undefined' ? performance.now() : Date.now()) - thumbsUiWait,
+        ),
+        'ms',
+      );
+      if (generation === bootstrapGenerationRef.current) {
+        setIsThumbsStoreLoaded(true);
+      }
+    } catch (error) {
+      console.error('Chat storage bootstrap failed:', error);
+      if (generation === bootstrapGenerationRef.current) {
+        setIsThumbsStoreLoaded(true);
+      }
+    }
+  }, [findMessageId, selectedChatId, setIsThumbsStoreLoaded]);
 
   // Initialize TDLib
   useEffect(() => {
@@ -596,7 +652,9 @@ const TelegramMessenger = () => {
                   // better solutions to chaining these things in deterministic fashion.
                   setTimeout(() => {
                     initializeData();
-                    findMessageId();
+                    if (selectedChatId) {
+                      runChatBootstrap();
+                    }
                   }, 1000);
                   break;
                   
@@ -1108,9 +1166,9 @@ const TelegramMessenger = () => {
   // Effect to find message ID when selected chat changes
   useEffect(() => {
     if (isConnected && selectedChatId) {
-      findMessageId();
+      runChatBootstrap();
     }
-  }, [isConnected, selectedChatId, findMessageId]);
+  }, [isConnected, selectedChatId, runChatBootstrap]);
 
 {/* I don't think this part where we're rendering anything or displaying ChatGroupSelector is needed. as we're doing all the Group selection processing and everything in Auth/GroupSelector.js. This was a legecy code when initially We used telegram messenger code as main code. Currently TelegramMessenger.js stays hidden off the screen, thus nothing needs to get displayed, just its updateAuthorizationState routing and telegramClient initialization etc are required which it can do from background i.e. when it is hidden and really we don't need to initialize the logic of ChatGroupSelector in it now.*/}
 {/* this is a 

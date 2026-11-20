@@ -17,6 +17,7 @@ export const TelegramProvider = ({ children }) => {
   // File structure state
   const [fileStructure, setFileStructure] = useState(createEmptyFileStructure());
   const [isFileStructureLoaded, setIsFileStructureLoaded] = useState(false);
+  const [isThumbsStoreLoaded, setIsThumbsStoreLoaded] = useState(false);
   
   // Reference to the Telegram client
   const [telegramClient, setTelegramClient] = useState(null);
@@ -81,6 +82,8 @@ export const TelegramProvider = ({ children }) => {
   // Custom setter for selectedChatId that also updates localStorage
   const updateSelectedChatId = (chatId, chatName) => {
     setSelectedChatId(chatId);
+    setIsFileStructureLoaded(false);
+    setIsThumbsStoreLoaded(false);
     if (chatName) {
       setSelectedChatName(chatName);
     }
@@ -99,6 +102,7 @@ export const TelegramProvider = ({ children }) => {
       // Reset all state
       setFileStructure(createEmptyFileStructure());
       setIsFileStructureLoaded(false);
+      setIsThumbsStoreLoaded(false);
       setIsConnected(false);
       setMessageId(null);
       setSelectedChatId(null);
@@ -193,6 +197,8 @@ export const TelegramProvider = ({ children }) => {
     setFileStructure,
     isFileStructureLoaded,
     setIsFileStructureLoaded,
+    isThumbsStoreLoaded,
+    setIsThumbsStoreLoaded,
     telegramClient,
     setTelegramClient,
     isConnected,

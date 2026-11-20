@@ -1,5 +1,6 @@
 import { getCachedPoster, deleteCachedPoster } from './thumbnailCache';
 import { isTrustedPosterSource } from './posterSources';
+import { whenThumbsStorePendingWork } from './telegramThumbsStore';
 
 const MAX_CONCURRENT = 4;
 let active = 0;
@@ -87,6 +88,8 @@ export async function resolveVideoPoster(telegramClient, chatId, messageId) {
       needsBackfill: false,
     };
   }
+
+  await whenThumbsStorePendingWork(chatId);
 
   const cached = await getCachedPoster(chatId, messageId);
   if (cached?.blob) {

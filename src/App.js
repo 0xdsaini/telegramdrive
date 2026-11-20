@@ -9,7 +9,6 @@ import { redirectToAppBaseIfNeeded } from './utils/appBasePath';
 import { registerStreamBridge, setStreamBridgeClient, refreshStreamBridgeAfterIdle } from './utils/streamBridge';
 import { installStreamDebugHelpers } from './utils/streamDebug';
 import { recordAppBoot } from './utils/reloadDebug';
-import { ensureTelegramThumbsStore } from './utils/telegramThumbsStore';
 import MobileReloadDebugPanel from './components/Debug/MobileReloadDebugPanel';
 
 // Component to handle app-level effects
@@ -19,7 +18,8 @@ const AppContent = () => {
     isConnected, 
     selectedChatId,
     isFileStructureLoaded,
-    telegramClient
+    isThumbsStoreLoaded,
+    telegramClient,
   } = useTelegram();
   
   // Set up event listener to clear files on page refresh/close
@@ -46,15 +46,6 @@ const AppContent = () => {
   useEffect(() => {
     setStreamBridgeClient(telegramClient);
   }, [telegramClient]);
-
-  useEffect(() => {
-    if (!isConnected || !selectedChatId || !telegramClient || !isFileStructureLoaded) {
-      return;
-    }
-    ensureTelegramThumbsStore(telegramClient, selectedChatId).catch((error) => {
-      console.warn('Failed to load or sync thumbs.db:', error);
-    });
-  }, [isConnected, selectedChatId, telegramClient, isFileStructureLoaded]);
 
   useEffect(() => {
     const bootAt = Date.now();
@@ -95,6 +86,8 @@ const AppContent = () => {
   
   // Determine what to render based on authentication state
   const isAuthenticated = isConnected && selectedChatId;
+  const isAppReady =
+    isAuthenticated && isFileStructureLoaded && isThumbsStoreLoaded;
   
   // Show the hidden TelegramMessenger component for handling Telegram API interactions
   // This component will be invisible but still functional
@@ -111,6 +104,13 @@ const AppContent = () => {
       
       {!isAuthenticated ? (
         <Auth />
+      ) : !isAppReady ? (
+        <div className="app-bootstrap-loading" role="status" aria-live="polite">
+          <p className="app-bootstrap-loading-title">Syncing from Telegram…</p>
+          <p className="app-bootstrap-loading-detail">
+            {!isFileStructureLoaded ? 'Loading metadata…' : 'Loading thumbnails…'}
+          </p>
+        </div>
       ) : (
         <div className="file-explorer-container">
           <FileExplorerHeader />

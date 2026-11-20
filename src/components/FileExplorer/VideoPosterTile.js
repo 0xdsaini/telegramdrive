@@ -4,6 +4,7 @@ import { resolveVideoPoster } from '../../utils/videoThumbnailResolver';
 import { captureVideoPosterFromStream } from '../../utils/captureVideoPosterFromStream';
 import { subscribePlaybackIdle } from '../../utils/streamBridge';
 import { formatVideoDuration } from '../../utils/mimeTypes';
+import { THUMBS_STORE_UPDATED_EVENT } from '../../utils/telegramThumbsStore';
 
 const VideoPosterTile = ({
   telegramClient,
@@ -62,6 +63,16 @@ const VideoPosterTile = ({
       setBackfillPass((p) => p + 1);
     });
   }, []);
+
+  useEffect(() => {
+    const onThumbsUpdated = (event) => {
+      if (event?.detail?.chatId === chatId) {
+        setBackfillPass((p) => p + 1);
+      }
+    };
+    window.addEventListener(THUMBS_STORE_UPDATED_EVENT, onThumbsUpdated);
+    return () => window.removeEventListener(THUMBS_STORE_UPDATED_EVENT, onThumbsUpdated);
+  }, [chatId]);
 
   useEffect(() => {
     if (!visible || !telegramClient || !chatId || !messageId) {

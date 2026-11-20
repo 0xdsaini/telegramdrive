@@ -65,10 +65,11 @@ function evictOldest(store, removeCount) {
 export async function getCachedPoster(chatId, messageId) {
   const client = typeof window !== 'undefined' ? window.tdClient : null;
   if (client) {
-    const { ensureTelegramThumbsStore, getPosterFromThumbsDb } = await import(
-      './telegramThumbsStore'
-    );
-    await ensureTelegramThumbsStore(client, chatId);
+    const { ensureTelegramThumbsStore, getPosterFromThumbsDb, isThumbsStoreReady } =
+      await import('./telegramThumbsStore');
+    if (!isThumbsStoreReady(chatId)) {
+      await ensureTelegramThumbsStore(client, chatId);
+    }
     const fromThumbsDb = await getPosterFromThumbsDb(client, chatId, messageId);
     if (fromThumbsDb?.blob) {
       await setCachedPoster(chatId, messageId, fromThumbsDb.blob, {

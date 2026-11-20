@@ -1,4 +1,5 @@
 import { downloadSmallTelegramFile } from './downloadSmallTelegramFile';
+import { createThumbsBootTimer, thumbsBootLog } from './thumbsBootstrapDebug';
 import {
   hydrateIndexedDbFromSqliteThumbs,
   listIndexedDbPostersForChat,
@@ -18,6 +19,29 @@ import {
 
 export const THUMBNAILS_MARKER = 'THUMBNAILS_STORAGE';
 export const THUMBS_DB_FILENAME = 'thumbs.db';
+export const THUMBS_STORE_UPDATED_EVENT = 'gramsafe-thumbs-store-updated';
+
+function notifyThumbsStoreUpdated(chatId) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  window.dispatchEvent(
+    new CustomEvent(THUMBS_STORE_UPDATED_EVENT, { detail: { chatId } }),
+  );
+}
+
+export async function whenThumbsStorePendingWork(chatId) {
+  const slot = stores.get(chatId);
+  if (!slot) {
+    return;
+  }
+  if (slot.loadPromise) {
+    await slot.loadPromise.catch(() => {});
+  }
+  if (slot.remoteRefreshPromise) {
+    await slot.remoteRefreshPromise.catch(() => {});
+  }
+}
 
 const THUMBS_MESSAGE_KEY_PREFIX = 'telegram-thumbs-message-id';
 const LOCAL_DB_CACHE_NAME = 'gramsafe-thumbs-db-file';
@@ -129,6 +153,31 @@ async function searchThumbsMessageViaHistory(client, chatId) {
   return null;
 }
 
+async function resolveThumbsMessageIdForBoot(client, chatId) {
+  const saved = localStorage.getItem(messageStorageKey(chatId));
+  if (saved) {
+    const numericId = parseInt(saved, 10);
+    if (!Number.isNaN(numericId)) {
+      try {
+        const message = await client.send({
+          '@type': 'getMessage',
+          chat_id: chatId,
+          message_id: numericId,
+        });
+        if (message && isThumbsStorageMessage(message)) {
+          return rememberThumbsMessageId(chatId, message.id);
+        }
+      } catch {
+        /* fall through to search */
+      }
+    }
+  }
+  return findThumbsMessageIdWithRetry(client, chatId, {
+    attempts: 2,
+    delayMs: 500,
+  });
+}
+
 /**
  * Single canonical thumbs.db message per chat (oldest match). Persisted like metadata message id.
  */
@@ -179,14 +228,20 @@ async function findThumbsMessageId(client, chatId) {
   return null;
 }
 
-async function findThumbsMessageIdWithRetry(client, chatId, { attempts = 4, delayMs = 1200 } = {}) {
-  for (let i = 0; i < attempts; i += 1) {
-    const id = await findThumbsMessageId(client, chatId);
-    if (id) {
-      return id;
-    }
-    if (i < attempts - 1) {
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
+async function findThumbsMessageIdWithRetry(
+  client,
+  chatId,
+  { attempts = 4, delayMs = 1200, quick = false } = {},
+) {
+  const id = await findThumbsMessageId(client, chatId);
+  if (id || quick) {
+    return id;
+  }
+  for (let i = 1; i < attempts; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    const retryId = await findThumbsMessageId(client, chatId);
+    if (retryId) {
+      return retryId;
     }
   }
   return null;
@@ -209,7 +264,8 @@ async function downloadThumbsDocument(client, chatId, thumbsMessageId) {
 
   const blob = await downloadSmallTelegramFile(client, fileId, {
     mimeType: 'application/octet-stream',
-    maxWaitMs: 180_000,
+    maxWaitMs: 45_000,
+    label: 'thumbs.db',
   });
   const bytes = new Uint8Array(await blob.arrayBuffer());
   const editDateUnix =
@@ -306,6 +362,7 @@ function getStore(chatId) {
       SQL: null,
       messageId: null,
       loadPromise: null,
+      remoteRefreshPromise: null,
       syncTimer: null,
       syncing: false,
       dirty: false,
@@ -315,11 +372,10 @@ function getStore(chatId) {
 }
 
 /**
- * Load thumbs.db from Telegram first, then union local cache + IndexedDB extras (maximize hits).
+ * Telegram thumbs.db is canonical; local IDB cache + browser posters fill gaps only.
  */
-async function buildUnionThumbsDatabase(client, chatId, slot, SQL) {
-  slot.messageId = await findThumbsMessageIdWithRetry(client, chatId);
-
+async function buildUnionThumbsDatabase(client, chatId, slot, SQL, { includeRemote = true } = {}) {
+  const finish = createThumbsBootTimer('buildUnionThumbsDatabase');
   let mergedDb = createEmptyThumbsDatabase(SQL);
 
   const closeWorking = (db) => {
@@ -328,26 +384,51 @@ async function buildUnionThumbsDatabase(client, chatId, slot, SQL) {
     }
   };
 
-  if (slot.messageId) {
+  const resolveMessageId = createThumbsBootTimer('findThumbsMessageId');
+  const readLocalCache = createThumbsBootTimer('readCachedDbFile');
+  const [cached, messageId] = await Promise.all([
+    readCachedDbFile(chatId),
+    includeRemote
+      ? resolveThumbsMessageIdForBoot(client, chatId)
+      : Promise.resolve(
+          (() => {
+            const saved = localStorage.getItem(messageStorageKey(chatId));
+            return saved ? parseInt(saved, 10) : null;
+          })(),
+        ),
+  ]);
+  slot.messageId = messageId;
+  resolveMessageId({ messageId: slot.messageId, includeRemote });
+  readLocalCache({ byteLength: cached?.bytes?.byteLength ?? 0 });
+
+  let gotRemote = false;
+  if (includeRemote && slot.messageId) {
+    const remotePhase = createThumbsBootTimer('downloadThumbsDocument');
     try {
       const remote = await downloadThumbsDocument(client, chatId, slot.messageId);
+      remotePhase({ byteLength: remote?.bytes?.byteLength ?? 0 });
       if (remote?.bytes?.byteLength) {
         mergedDb.close();
         mergedDb = openThumbsDatabase(SQL, remote.bytes);
+        gotRemote = true;
       }
     } catch (error) {
+      remotePhase({ error: error?.message || String(error) });
       console.warn('Failed to download thumbs.db from Telegram:', error);
     }
   }
 
-  const cached = await readCachedDbFile(chatId);
-  if (cached?.bytes?.byteLength) {
+  if (!gotRemote && cached?.bytes?.byteLength) {
+    mergedDb.close();
+    mergedDb = openThumbsDatabase(SQL, cached.bytes);
+  } else if (gotRemote && cached?.bytes?.byteLength) {
     const cachedDb = openThumbsDatabase(SQL, cached.bytes);
     await unionMergeGapsOnly(mergedDb, cachedDb);
     closeWorking(cachedDb);
   }
 
   let addedFromBrowser = 0;
+  const idbPhase = createThumbsBootTimer('mergeIndexedDbPosters');
   const idbRecords = await listIndexedDbPostersForChat(chatId);
   for (const row of idbRecords) {
     if (getPosterRow(mergedDb, chatId, row.messageId)) {
@@ -359,6 +440,7 @@ async function buildUnionThumbsDatabase(client, chatId, slot, SQL) {
     });
     addedFromBrowser += 1;
   }
+  idbPhase({ scanned: idbRecords.length, added: addedFromBrowser });
 
   if (slot.db && slot.db !== mergedDb) {
     slot.db.close();
@@ -366,15 +448,53 @@ async function buildUnionThumbsDatabase(client, chatId, slot, SQL) {
   slot.db = mergedDb;
   setThumbsUpdatedAt(mergedDb);
 
-  await hydrateIndexedDbFromSqliteThumbs(chatId, mergedDb, { overwrite: true });
+  finish({
+    includeRemote,
+    gotRemote,
+    posterCount: listPosterKeys(mergedDb).length,
+    messageId: slot.messageId,
+  });
+  notifyThumbsStoreUpdated(chatId);
+}
 
-  const bytes = exportThumbsDatabase(mergedDb);
-  await writeCachedDbFile(chatId, bytes, getThumbsUpdatedAt(mergedDb) ?? Date.now());
-
-  if (addedFromBrowser > 0) {
-    slot.dirty = true;
-    scheduleThumbsSync(client, chatId);
+async function finalizeThumbsDbSideEffects(client, chatId, slot, { hydrateIdb = true } = {}) {
+  if (!slot.db) {
+    return;
   }
+  if (hydrateIdb) {
+    const hydratePhase = createThumbsBootTimer('hydrateIndexedDbFromSqliteThumbs');
+    await hydrateIndexedDbFromSqliteThumbs(chatId, slot.db, { overwrite: true });
+    hydratePhase({ posterCount: listPosterKeys(slot.db).length });
+  }
+  const bytes = exportThumbsDatabase(slot.db);
+  await writeCachedDbFile(chatId, bytes, getThumbsUpdatedAt(slot.db) ?? Date.now());
+}
+
+function scheduleRemoteThumbsRefresh(client, chatId) {
+  const slot = getStore(chatId);
+  if (slot.remoteRefreshPromise) {
+    return slot.remoteRefreshPromise;
+  }
+  slot.remoteRefreshPromise = (async () => {
+    thumbsBootLog('remoteRefresh-start', { chatId });
+    const refreshDone = createThumbsBootTimer('remoteRefresh');
+    try {
+      if (!slot.SQL) {
+        slot.SQL = await loadSqlModule();
+      }
+      await buildUnionThumbsDatabase(client, chatId, slot, slot.SQL, {
+        includeRemote: true,
+      });
+      await finalizeThumbsDbSideEffects(client, chatId, slot, { hydrateIdb: true });
+      refreshDone({ posterCount: listPosterKeys(slot.db).length });
+    } catch (error) {
+      refreshDone({ error: error?.message || String(error) });
+      console.warn('Background thumbs.db refresh failed:', error);
+    }
+  })().finally(() => {
+    slot.remoteRefreshPromise = null;
+  });
+  return slot.remoteRefreshPromise;
 }
 
 async function loadThumbsStore(client, chatId) {
@@ -388,9 +508,27 @@ async function loadThumbsStore(client, chatId) {
   }
 
   slot.loadPromise = (async () => {
+    const bootDone = createThumbsBootTimer('loadThumbsStore');
+    const sqlTimer = createThumbsBootTimer('loadSqlModule');
     const SQL = await loadSqlModule();
+    sqlTimer({});
     slot.SQL = SQL;
-    await buildUnionThumbsDatabase(client, chatId, slot, SQL);
+    await buildUnionThumbsDatabase(client, chatId, slot, SQL, {
+      includeRemote: true,
+    });
+    const bytes = exportThumbsDatabase(slot.db);
+    await writeCachedDbFile(chatId, bytes, getThumbsUpdatedAt(slot.db) ?? Date.now());
+    hydrateIndexedDbFromSqliteThumbs(chatId, slot.db, { overwrite: true })
+      .then(() => {
+        createThumbsBootTimer('hydrateIndexedDbFromSqliteThumbs')({
+          posterCount: listPosterKeys(slot.db).length,
+          deferred: true,
+        });
+      })
+      .catch((error) => {
+        console.warn('Deferred thumbs IDB hydrate failed:', error);
+      });
+    bootDone({ posterCount: listPosterKeys(slot.db).length });
     slot.loadPromise = null;
   })();
 
@@ -468,6 +606,11 @@ export async function syncThumbsToTelegram(client, chatId) {
   } finally {
     slot.syncing = false;
   }
+}
+
+export function isThumbsStoreReady(chatId) {
+  const slot = stores.get(chatId);
+  return Boolean(slot?.db);
 }
 
 export async function ensureTelegramThumbsStore(client, chatId) {

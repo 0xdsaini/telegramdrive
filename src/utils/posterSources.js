@@ -3,6 +3,7 @@ export const TRUSTED_POSTER_SOURCES = new Set([
   'client-stream',
   'upload-jpeg',
   'thumbs-db',
+  'cache',
 ]);
 
 export function isTrustedPosterSource(source) {
