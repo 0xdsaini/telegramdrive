@@ -75,6 +75,49 @@ export function deriveUnnamedVideoFileName(message, index) {
   return `unnamed video ${index}${ext}`;
 }
 
+function namesMatch(expected, actual) {
+  if (!expected || !actual) {
+    return false;
+  }
+  if (expected === actual) {
+    return true;
+  }
+  return expected.localeCompare(actual, undefined, { sensitivity: 'accent' }) === 0;
+}
+
+/** Whether a Telegram message is the metadata file entry the user asked for. */
+export function messageMatchesRequestedFile(message, requestedFileName) {
+  if (!message?.content || !requestedFileName) {
+    return false;
+  }
+  const content = message.content;
+  const type = content['@type'];
+
+  if (type === 'messageDocument') {
+    const docName = content.document?.file_name;
+    return namesMatch(requestedFileName, docName);
+  }
+
+  if (type === 'messageVideo') {
+    const videoName = content.video?.file_name;
+    const derived = deriveVideoFileNameFromMessage(message);
+    return (
+      namesMatch(requestedFileName, videoName)
+      || namesMatch(requestedFileName, derived)
+    );
+  }
+
+  if (type === 'messageAudio') {
+    return namesMatch(requestedFileName, content.audio?.file_name);
+  }
+
+  if (type === 'messageAnimation') {
+    return namesMatch(requestedFileName, content.animation?.file_name);
+  }
+
+  return false;
+}
+
 function messageMediaSize(message) {
   const type = message.content?.['@type'];
   if (type === 'messageDocument') {

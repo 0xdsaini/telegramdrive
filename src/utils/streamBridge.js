@@ -12,7 +12,7 @@ import { isNoSwReloadEnabled, recordDebugEvent } from './reloadDebug';
 let registered = false;
 let activeClient = null;
 let registrationRef = null;
-const STREAM_SW_REV = 8;
+const STREAM_SW_REV = 9;
 const partRequestChains = new Map();
 /** Avoid back-to-back full prepare (Play click + modal open both used to call this). */
 const PREPARE_RECENT_MS = 45_000;

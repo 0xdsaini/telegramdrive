@@ -855,7 +855,23 @@ const FileExplorer = () => {
         fileName,
         fileEntry.message_id
       );
-      streamDebug('play', 'resolveTelegramFile OK', resolved);
+      streamDebug('play', 'resolveTelegramFile OK', {
+        fileName,
+        fileId: resolved.fileId,
+        size: resolved.size,
+        messageId: resolved.messageId,
+        metadataMessageId: fileEntry.message_id,
+      });
+
+      if (resolved.messageId !== fileEntry.message_id) {
+        const updatedStructure = addFile(
+          fileStructure,
+          currentPath,
+          fileName,
+          resolved.messageId,
+        );
+        await window.updateTelegramFileStructure?.(updatedStructure);
+      }
 
       const streamUrl = getStreamUrl({
         fileId: resolved.fileId,

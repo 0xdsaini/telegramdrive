@@ -293,6 +293,10 @@ export const moveFolder = (fileStructure, sourcePath, destPath) => {
  * @param {string} messageId - Telegram message ID containing the file
  * @returns {Object} Updated file structure
  */
+function newFileInode() {
+  return `file_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+}
+
 export const addFile = (fileStructure, folderPath, filename, messageId) => {
   const folder = findFolderByPath(fileStructure, folderPath);
   if (!folder) {
@@ -305,14 +309,14 @@ export const addFile = (fileStructure, folderPath, filename, messageId) => {
   if (existingFileIndex !== -1) {
     // Update existing file
     folder.files[existingFileIndex] = {
-      inode: `file_${Date.now()}`,
+      inode: newFileInode(),
       filename,
       message_id: messageId
     };
   } else {
     // Add new file
     folder.files.push({
-      inode: `file_${Date.now()}`,
+      inode: newFileInode(),
       filename,
       message_id: messageId
     });

@@ -4,7 +4,7 @@
  * File bytes are fetched from the page via TDLib (downloadFile + readFilePart).
  * STREAM_SW_REV=6 — TDLib: sequential 1 MiB parts (no single 2 MiB downloadFile).
  */
-const STREAM_SW_REV = 8;
+const STREAM_SW_REV = 9;
 
 const STREAM_CHUNK_MIDDLE_LIMIT = 512 * 1024;
 const STREAM_CHUNK_UPPER_LIMIT = 1024 * 1024;
@@ -71,7 +71,9 @@ function parseInfo(params) {
 }
 
 function getStreamId(info) {
-  return String(info.fileId);
+  const size = Number(info.size) || 0;
+  const name = info.fileName || '';
+  return `${String(info.fileId)}:${size}:${name}`;
 }
 
 function responseForSafariFirstRange(range, mimeType, size) {
@@ -404,6 +406,7 @@ class Stream {
     const id = getStreamId(info);
     const existing = streams.get(id);
     if (existing) {
+      existing.info = { ...existing.info, ...info };
       if (preferredClientId) {
         existing.preferredClientId = preferredClientId;
       }
