@@ -1,3 +1,7 @@
+body.yt-player-open .mobile-reload-debug-fab {
+  display: none;
+}
+
 .mobile-reload-debug-fab {
   position: fixed;
   right: 12px;

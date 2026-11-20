@@ -39,6 +39,8 @@ const VIDEO_EVENTS = [
 const PLAYBACK_RATES = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 const CONTROLS_HIDE_MS = 2800;
 const SEEK_STEP = 10;
+const DOUBLE_TAP_MS = 320;
+const SEEK_RIPPLE_MS = 700;
 
 function formatTime(seconds) {
   if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
@@ -68,6 +70,8 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
   const progressRef = useRef(null);
   const playbackRetryRef = useRef(false);
   const preparePlaybackRef = useRef(preparePlayback);
+  const tapGestureRef = useRef({ pending: null, lastAt: 0 });
+  const lastTouchAtRef = useRef(0);
 
   useEffect(() => {
     preparePlaybackRef.current = preparePlayback;
@@ -87,6 +91,8 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
   const [isWaiting, setIsWaiting] = useState(false);
   const [isPreparing, setIsPreparing] = useState(false);
   const [scrubPreview, setScrubPreview] = useState(null);
+  const [immersiveMode, setImmersiveMode] = useState(false);
+  const [seekRipple, setSeekRipple] = useState(null);
 
   const bumpControlsVisible = useCallback(() => {
     setShowControls(true);
@@ -155,20 +161,115 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
     [bumpControlsVisible]
   );
 
+  const triggerSeekRipple = useCallback((side) => {
+    const burst = Date.now();
+    setSeekRipple({ side, burst });
+    window.setTimeout(() => {
+      setSeekRipple((prev) => (prev?.burst === burst ? null : prev));
+    }, SEEK_RIPPLE_MS);
+  }, []);
+
+  const handleVideoAreaSeek = useCallback(
+    (side) => {
+      seekBy(side === 'left' ? -SEEK_STEP : SEEK_STEP);
+      triggerSeekRipple(side);
+    },
+    [seekBy, triggerSeekRipple]
+  );
+
+  const clearTapGesture = useCallback(() => {
+    if (tapGestureRef.current.pending) {
+      clearTimeout(tapGestureRef.current.pending);
+      tapGestureRef.current.pending = null;
+    }
+    tapGestureRef.current.lastAt = 0;
+  }, []);
+
+  const handleVideoAreaClick = useCallback(
+    (e) => {
+      if (Date.now() - lastTouchAtRef.current < 500) return;
+      if (e.pointerType && e.pointerType !== 'mouse') return;
+      togglePlay();
+    },
+    [togglePlay]
+  );
+
+  const handleVideoAreaPointerUp = useCallback(
+    (e) => {
+      if (e.pointerType !== 'touch') return;
+      lastTouchAtRef.current = Date.now();
+
+      const rect = e.currentTarget.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const now = Date.now();
+
+      if (now - tapGestureRef.current.lastAt < DOUBLE_TAP_MS) {
+        clearTapGesture();
+        e.preventDefault();
+        handleVideoAreaSeek(x < rect.width / 2 ? 'left' : 'right');
+        return;
+      }
+
+      tapGestureRef.current.lastAt = now;
+      tapGestureRef.current.pending = window.setTimeout(() => {
+        tapGestureRef.current.pending = null;
+        tapGestureRef.current.lastAt = 0;
+        bumpControlsVisible();
+        const video = videoRef.current;
+        if (video?.paused) togglePlay();
+      }, DOUBLE_TAP_MS);
+    },
+    [bumpControlsVisible, clearTapGesture, handleVideoAreaSeek, togglePlay]
+  );
+
+  const swallowVideoDoubleClick = useCallback(
+    (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      clearTapGesture();
+    },
+    [clearTapGesture]
+  );
+
   const toggleFullscreen = useCallback(async () => {
     const stage = stageRef.current;
     if (!stage) return;
-    try {
-      if (!document.fullscreenElement) {
-        await stage.requestFullscreen();
-      } else {
+
+    const inNativeFs = !!document.fullscreenElement;
+    if (inNativeFs) {
+      try {
         await document.exitFullscreen();
+      } catch {
+        /* ignore */
       }
-    } catch {
-      /* ignore */
+      bumpControlsVisible();
+      return;
     }
+
+    if (immersiveMode) {
+      setImmersiveMode(false);
+      bumpControlsVisible();
+      return;
+    }
+
+    const req =
+      stage.requestFullscreen?.bind(stage)
+      || stage.webkitRequestFullscreen?.bind(stage)
+      || stage.webkitEnterFullscreen?.bind(stage);
+
+    if (req) {
+      try {
+        await req();
+        bumpControlsVisible();
+        return;
+      } catch {
+        /* fall through to immersive */
+      }
+    }
+
+    setImmersiveMode(true);
     bumpControlsVisible();
-  }, [bumpControlsVisible]);
+  }, [bumpControlsVisible, immersiveMode]);
 
   const setRate = useCallback(
     (rate) => {
@@ -183,10 +284,36 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
   );
 
   useEffect(() => {
-    const onFs = () => setIsFullscreen(!!document.fullscreenElement);
+    const onFs = () => setIsFullscreen(!!document.fullscreenElement || immersiveMode);
     document.addEventListener('fullscreenchange', onFs);
-    return () => document.removeEventListener('fullscreenchange', onFs);
-  }, []);
+    document.addEventListener('webkitfullscreenchange', onFs);
+    onFs();
+    return () => {
+      document.removeEventListener('fullscreenchange', onFs);
+      document.removeEventListener('webkitfullscreenchange', onFs);
+    };
+  }, [immersiveMode]);
+
+  useEffect(() => {
+    if (!open) {
+      setImmersiveMode(false);
+      clearTapGesture();
+      setSeekRipple(null);
+      document.body.classList.remove('yt-player-open');
+      return undefined;
+    }
+    document.body.classList.add('yt-player-open');
+    return () => document.body.classList.remove('yt-player-open');
+  }, [open, clearTapGesture]);
+
+  useEffect(() => {
+    if (!immersiveMode) return undefined;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [immersiveMode]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -230,7 +357,11 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
           changeVolume(Math.max(0, (videoRef.current?.volume ?? volume) - 0.05));
           break;
         case 'Escape':
-          if (!document.fullscreenElement) onClose();
+          if (immersiveMode) {
+            setImmersiveMode(false);
+          } else if (!document.fullscreenElement) {
+            onClose();
+          }
           break;
         default:
           break;
@@ -238,7 +369,7 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, togglePlay, toggleFullscreen, toggleMute, seekBy, changeVolume, volume, onClose]);
+  }, [open, immersiveMode, togglePlay, toggleFullscreen, toggleMute, seekBy, changeVolume, volume, onClose]);
 
   useEffect(() => {
     if (!open || !streamUrl || !videoRef.current) return undefined;
@@ -421,8 +552,8 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
       <div
         ref={stageRef}
         className={`yt-player-stage${isFullscreen ? ' yt-player-stage--fullscreen' : ''}${
-          showControls ? ' yt-player-stage--controls-visible' : ''
-        }`}
+          immersiveMode ? ' yt-player-stage--immersive' : ''
+        }${showControls ? ' yt-player-stage--controls-visible' : ''}`}
         onClick={(e) => e.stopPropagation()}
         onMouseMove={bumpControlsVisible}
         onTouchStart={bumpControlsVisible}
@@ -438,8 +569,9 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
 
         <div
           className="yt-player-video-wrap"
-          onClick={togglePlay}
-          onDoubleClick={toggleFullscreen}
+          onClick={handleVideoAreaClick}
+          onPointerUp={handleVideoAreaPointerUp}
+          onDoubleClick={swallowVideoDoubleClick}
           role="presentation"
         >
           <video ref={videoRef} className="yt-player-video" playsInline />
@@ -458,14 +590,29 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
             <button
               type="button"
               className="yt-player-big-play"
+              onPointerUp={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
+                clearTapGesture();
                 togglePlay();
               }}
               aria-label="Play"
             >
               <FaPlay />
             </button>
+          ) : null}
+
+          {seekRipple ? (
+            <div
+              className={`yt-player-seek-ripple yt-player-seek-ripple--${seekRipple.side}`}
+              key={seekRipple.burst}
+              aria-hidden
+            >
+              <span className="yt-player-seek-ripple-ring" />
+              <span className="yt-player-seek-ripple-label">
+                {seekRipple.side === 'left' ? '−10 seconds' : '+10 seconds'}
+              </span>
+            </div>
           ) : null}
 
           <div className="yt-player-gradient yt-player-gradient--top">
