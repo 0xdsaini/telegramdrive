@@ -1,8 +1,12 @@
+import { isAppDebugEnabled } from './appDebug';
 import { appendPersistedLog } from './reloadDebug';
 
 const PREFIX = '[thumbs-boot]';
 
 export function thumbsBootLog(phase, detail = {}) {
+  if (!isAppDebugEnabled()) {
+    return;
+  }
   const line = `${PREFIX} ${phase} ${JSON.stringify({
     ...detail,
     t: Date.now(),

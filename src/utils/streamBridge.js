@@ -5,13 +5,14 @@ import {
   cancelTdlibFileDownloads,
   prioritizeStreamingDownloads,
 } from './tdlibFilePartReader';
+import { syncStreamSwDebugFlag } from './appDebug';
 import { streamDebug, streamDebugError } from './streamDebug';
 import { isNoSwReloadEnabled, recordDebugEvent } from './reloadDebug';
 
 let registered = false;
 let activeClient = null;
 let registrationRef = null;
-const STREAM_SW_REV = 7;
+const STREAM_SW_REV = 8;
 const partRequestChains = new Map();
 /** Avoid back-to-back full prepare (Play click + modal open both used to call this). */
 const PREPARE_RECENT_MS = 45_000;
@@ -543,6 +544,7 @@ async function ensureStreamBridgeRegistered() {
         updateViaCache: 'none',
       });
       await navigator.serviceWorker.ready;
+      syncStreamSwDebugFlag();
       streamDebug('bridge', 'registerStreamBridge OK', {
         scope: registrationRef.scope,
         active: registrationRef.active?.scriptURL,

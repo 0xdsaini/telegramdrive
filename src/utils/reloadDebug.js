@@ -3,6 +3,8 @@
  * index.html bootstrapping writes the same keys via inline helpers — keep EVENTS_KEY in sync.
  */
 
+import { isAppDebugEnabled } from './appDebug';
+
 export const DEBUG_EVENTS_KEY = 'tg-drive-debug-events';
 export const DEBUG_LOGS_KEY = 'tg-drive-debug-logs';
 const MAX_EVENTS = 200;
@@ -39,6 +41,11 @@ export function isNoSwReloadEnabled() {
   }
 }
 
+/** Persist timeline / logs when explicitly debugging (not during normal mobile use). */
+export function shouldPersistDebugTelemetry() {
+  return isAppDebugEnabled() || isDebugPanelForced() || isNoSwReloadEnabled();
+}
+
 export function isDebugPanelForced() {
   try {
     if (typeof window !== 'undefined') {
@@ -54,7 +61,7 @@ export function isDebugPanelForced() {
 }
 
 export function recordDebugEvent(type, detail = {}) {
-  if (typeof window === 'undefined') return;
+  if (typeof window === 'undefined' || !shouldPersistDebugTelemetry()) return;
   try {
     const events = safeParse(localStorage.getItem(DEBUG_EVENTS_KEY), []);
     events.push({
@@ -77,7 +84,7 @@ export function recordDebugEvent(type, detail = {}) {
 }
 
 export function appendPersistedLog(line) {
-  if (typeof window === 'undefined') return;
+  if (typeof window === 'undefined' || !isAppDebugEnabled()) return;
   try {
     const logs = safeParse(localStorage.getItem(DEBUG_LOGS_KEY), []);
     logs.push({ t: new Date().toISOString(), line });
@@ -174,6 +181,9 @@ export function clearDebugPersistence() {
 
 /** First React tick — record that the app bundle started. */
 export function recordAppBoot() {
+  if (!shouldPersistDebugTelemetry()) {
+    return;
+  }
   recordDebugEvent('react_boot', {
     hasSwController: !!navigator.serviceWorker?.controller,
     noSwReload: isNoSwReloadEnabled(),

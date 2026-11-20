@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { isAppDebugEnabled } from '../../utils/appDebug';
 import {
   buildDebugReport,
   clearDebugPersistence,
@@ -73,8 +74,10 @@ const MobileReloadDebugPanel = () => {
           <div className="mobile-reload-debug-sheet">
             <h2 className="mobile-reload-debug-title">Reload debug</h2>
             <p className="mobile-reload-debug-hint">
-              If the page keeps refreshing, open this quickly or add{' '}
-              <code>?debugReload=1&amp;noSwReload=1</code> to the URL first.
+              Verbose stream/TDLib logs: add <code>?debug=1</code> (use{' '}
+              <code>?debug=0</code> to turn off). Reload issues:{' '}
+              <code>?debugReload=1&amp;noSwReload=1</code>. Debug mode is{' '}
+              {isAppDebugEnabled() ? 'ON' : 'OFF'}.
             </p>
             <div className="mobile-reload-debug-actions">
               <button type="button" onClick={handleCopy}>

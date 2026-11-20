@@ -1,3 +1,4 @@
+import { isAppDebugEnabled } from './appDebug';
 import { appendPersistedLog, recordDebugEvent } from './reloadDebug';
 
 const TAG = '[STREAM_DEBUG]';
@@ -16,6 +17,9 @@ function push(line) {
 }
 
 export function streamDebug(stage, message, data) {
+  if (!isAppDebugEnabled()) {
+    return;
+  }
   const parts = [`${TAG} [${stage}]`, message];
   if (data !== undefined) {
     parts.push(data);
@@ -46,6 +50,9 @@ function replacer(_key, value) {
 }
 
 export function streamDebugError(stage, message, error) {
+  if (!isAppDebugEnabled()) {
+    return;
+  }
   const detail = error?.stack || error?.message || String(error);
   console.error(`${TAG} [${stage}]`, message, error);
   const line = `[${stage}] ERROR: ${message} | ${detail}`;

@@ -4,7 +4,7 @@
  * File bytes are fetched from the page via TDLib (downloadFile + readFilePart).
  * STREAM_SW_REV=6 — TDLib: sequential 1 MiB parts (no single 2 MiB downloadFile).
  */
-const STREAM_SW_REV = 7;
+const STREAM_SW_REV = 8;
 
 const STREAM_CHUNK_MIDDLE_LIMIT = 512 * 1024;
 const STREAM_CHUNK_UPPER_LIMIT = 1024 * 1024;
@@ -19,7 +19,13 @@ const STREAMABLE_MIME_TYPE = /^(?:video|audio|image)\/[\w.+-]+$/;
 const deferredPromises = new Map();
 const streams = new Map();
 
+/** Set from the page via STREAM_DEBUG_FLAG (?debug=1). Off by default for mobile perf. */
+let swDebugEnabled = false;
+
 function swDebug(stage, msg, extra) {
+  if (!swDebugEnabled) {
+    return;
+  }
   console.log('[STREAM_DEBUG_SW]', stage, msg, extra || '');
   self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
     clients.forEach((client) => {
@@ -451,6 +457,10 @@ function toggleStreamInUse({ url, inUse }) {
 }
 
 self.addEventListener('message', (event) => {
+  if (event.data?.type === 'STREAM_DEBUG_FLAG') {
+    swDebugEnabled = Boolean(event.data.enabled);
+    return;
+  }
   if (event.data?.type === 'SKIP_WAITING') {
     self.skipWaiting();
     return;

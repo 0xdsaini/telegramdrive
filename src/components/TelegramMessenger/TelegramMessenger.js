@@ -12,6 +12,7 @@ import React, { useState, useEffect, useRef, useCallback, useContext } from 'rea
 import ChatGroupSelector from '../ChatGroupSelector/ChatGroupSelector';
 import { TelegramContext } from '../../context/TelegramContext';
 import { runChatStorageBootstrap } from '../../utils/chatBootstrap';
+import { debugLog, isAppDebugEnabled } from '../../utils/appDebug';
 import './TelegramMessenger.css';
 
 const METADATA_MARKER = 'METADATA_STORAGE';
@@ -435,7 +436,7 @@ const TelegramMessenger = () => {
         client: clientRef.current,
         chatId: selectedChatId,
       });
-      console.log(
+      debugLog(
         '[thumbs-boot] ui-ready',
         Math.round(
           (typeof performance !== 'undefined' ? performance.now() : Date.now()) - thumbsUiWait,
@@ -526,9 +527,10 @@ const TelegramMessenger = () => {
 
         // Create TDLib client
         const TdClient = window.tdweb.default;
+        const verboseTdlib = isAppDebugEnabled();
         const client = new TdClient({
-          logVerbosityLevel: 2, // Increased for more detailed logs
-          jsLogVerbosityLevel: 'debug', // Changed to debug for more detailed logs
+          logVerbosityLevel: verboseTdlib ? 2 : 0,
+          jsLogVerbosityLevel: verboseTdlib ? 'warning' : 'error',
           mode: 'wasm',
           api_id: TELEGRAM_API_ID,
           api_hash: TELEGRAM_API_HASH,
@@ -559,9 +561,9 @@ const TelegramMessenger = () => {
             
             // Handle message send success events
             if (update['@type'] === 'updateMessageSendSucceeded') {
-              console.log('Message sent successfully:', update.message);
+              debugLog('Message sent successfully:', update.message);
               if (update.message.content?.text?.text?.includes("METADATA_STORAGE")) {
-                console.log("METADATA_STORAGE message id:", update.message.id);
+                debugLog("METADATA_STORAGE message id:", update.message.id);
                 setMessageId(update.message.id);
               }
             }
