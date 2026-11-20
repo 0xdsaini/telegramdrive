@@ -28,6 +28,16 @@
       Learn how to configure a non-root public URL by running `npm run build`.
     -->
     <title>Telegram Drive</title>
+    <script>
+      (function tgDriveEnsureBasePathTrailingSlash() {
+        var baked = '%PUBLIC_URL%';
+        if (!baked || baked === '.' || baked.indexOf('PUBLIC_URL') !== -1) return;
+        var base = baked.replace(/\/$/, '');
+        if (base && location.pathname === base) {
+          location.replace(base + '/' + location.search + location.hash);
+        }
+      })();
+    </script>
   </head>
   <body>
     <script>
@@ -90,8 +100,8 @@
         var base = tgDriveResolveAppBasePath();
         var swPath = (base ? base : '') + '/progressive-sw.js?rev=7';
         var swUrl = new URL(swPath, window.location.origin).href;
-        var scope = new URL((base ? base + '/' : '/'), window.location.origin).href;
-        navigator.serviceWorker.register(swUrl, { scope: scope, updateViaCache: 'none' }).then(function (reg) {
+        var scopePath = base ? base + '/' : '/';
+        navigator.serviceWorker.register(swUrl, { scope: scopePath, updateViaCache: 'none' }).then(function (reg) {
           function pokeClaim() {
             var worker = reg.active || reg.waiting || reg.installing;
             if (worker) worker.postMessage({ type: 'FORCE_CLAIM' });
@@ -100,51 +110,16 @@
           if (navigator.serviceWorker.controller) return;
           pokeClaim();
           reg.addEventListener('updatefound', function () { pokeClaim(); });
-          var bootKey = 'stream-sw-reload-attempted';
-          var maxReloads = 2;
           navigator.serviceWorker.ready.then(function () {
             if (navigator.serviceWorker.controller) return;
             pokeClaim();
-            setTimeout(function () {
-              if (navigator.serviceWorker.controller) return;
-              pokeClaim();
-              var raw = sessionStorage.getItem(bootKey);
-              var count = parseInt(raw || '0', 10);
-              if (!Number.isFinite(count)) count = raw === '1' ? 1 : 0;
-              if (window.__tgDriveNoSwReload && window.__tgDriveNoSwReload()) {
-                if (window.__tgDriveRecordReloadEvent) {
-                  window.__tgDriveRecordReloadEvent('reload_blocked', {
-                    source: 'index.html:bootstrap-no-controller',
-                    count: count,
-                  });
-                }
-                return;
-              }
-              if (count >= maxReloads) {
-                if (window.__tgDriveRecordReloadEvent) {
-                  window.__tgDriveRecordReloadEvent('reload_skipped_max', {
-                    source: 'index.html:bootstrap-no-controller',
-                    count: count,
-                  });
-                }
-                return;
-              }
-              sessionStorage.setItem(bootKey, String(count + 1));
-              if (window.__tgDriveRecordReloadEvent) {
-                window.__tgDriveRecordReloadEvent('reload_scheduled', {
-                  source: 'index.html:bootstrap-no-controller',
-                  count: count + 1,
-                });
-              }
-              window.location.reload();
-            }, 400);
           });
         }).catch(function (err) {
           if (window.__tgDriveRecordReloadEvent) {
             window.__tgDriveRecordReloadEvent('sw_register_failed', {
               base: base,
               swUrl: swUrl,
-              scope: scope,
+              scope: scopePath,
               message: err && err.message ? err.message : String(err),
             });
           }

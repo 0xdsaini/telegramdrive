@@ -1,4 +1,4 @@
-import { getAppBasePath } from './appBasePath';
+import { getAppBasePath, redirectToAppBaseIfNeeded } from './appBasePath';
 import {
   requestTdlibFilePart,
   cancelTdlibFilePartRequests,
@@ -296,6 +296,10 @@ export async function waitForStreamServiceWorkerControl({ timeoutMs = 8000, allo
     throw new Error('Service workers are not supported in this browser.');
   }
 
+  if (redirectToAppBaseIfNeeded()) {
+    throw new Error('Redirecting to app URL with correct path for streaming…');
+  }
+
   await ensureStreamBridgeRegistered();
 
   if (navigator.serviceWorker.controller) {
@@ -312,10 +316,18 @@ export async function waitForStreamServiceWorkerControl({ timeoutMs = 8000, allo
 
   await requestForceClaim(registrationRef);
 
-  const acquired = await waitForControllerOnly(Math.min(timeoutMs, 5000));
+  const acquired = await waitForControllerOnly(Math.min(timeoutMs, 2500));
 
   if (acquired) {
     streamDebug('bridge', 'service worker now controlling page');
+    clearStreamSwReloadFlag();
+    return;
+  }
+
+  await reclaimStreamServiceWorker({ hard: false });
+  const acquiredAfterClaim = await waitForControllerOnly(2000);
+  if (acquiredAfterClaim) {
+    streamDebug('bridge', 'service worker controlling page after soft reclaim');
     clearStreamSwReloadFlag();
     return;
   }
@@ -324,28 +336,12 @@ export async function waitForStreamServiceWorkerControl({ timeoutMs = 8000, allo
     throw new Error('Stream worker is not attached to this tab yet.');
   }
 
-  if (registrationRef?.active) {
-    streamDebug('bridge', 'active SW without controller — reload to attach');
-    if (reloadForServiceWorkerControl('waitForStreamServiceWorkerControl:active-no-controller')) {
-      throw new Error('Reloading to attach stream worker… press Play again right after the page loads.');
-    }
-  } else {
-    streamDebug('bridge', 'no active SW — try reload if under cap');
-    if (reloadForServiceWorkerControl('waitForStreamServiceWorkerControl:no-active-sw')) {
-      throw new Error(
-        'Activating stream worker — reloading this tab once. After the reload, press Play again.'
-      );
-    }
-  }
-
-  streamDebug('bridge', 'prior reload did not help — hard reclaim');
-  await reclaimStreamServiceWorker({ hard: true });
-
-  if (!navigator.serviceWorker?.controller) {
-    throw new Error(
-      'Stream worker is not attached to this tab. Press Play once more, or open the app in a new tab.'
-    );
-  }
+  const scopeHint = getAppBasePath();
+  throw new Error(
+    scopeHint
+      ? `Streaming needs the URL path ${scopeHint}/ (note the trailing slash). Refresh or open that link, then press Play again.`
+      : 'Stream worker is not attached to this tab. Refresh the page and try Play again.'
+  );
 }
 
 export function toggleStreamInUse(url, inUse) {
@@ -484,14 +480,17 @@ export async function refreshStreamBridgeAfterIdle(telegramClient, { idleMs = 0 
       setStreamBridgeClient(telegramClient);
     }
 
-    const needsHardReclaim =
-      !navigator.serviceWorker?.controller || idleMs >= 5 * 60_000;
+    if (!navigator.serviceWorker?.controller) {
+      // Never unregister on focus/visibility — that guarantees this tab stays uncontrolled until reload.
+      await reclaimStreamServiceWorker({ hard: false });
+      await waitForControllerOnly(idleMs > 0 ? 6000 : 4000);
+      return;
+    }
 
-    if (needsHardReclaim) {
-      await reclaimStreamServiceWorker({ hard: !navigator.serviceWorker?.controller });
-    } else {
+    if (idleMs >= 5 * 60_000) {
       await ensureStreamBridgeRegistered();
       await promoteWaitingServiceWorker(registrationRef);
+      await requestForceClaim(registrationRef);
       await waitForControllerOnly(4000);
     }
   } catch (error) {
@@ -503,6 +502,8 @@ async function ensureStreamBridgeRegistered() {
   if (!('serviceWorker' in navigator)) {
     return;
   }
+
+  redirectToAppBaseIfNeeded();
 
   const base = getAppBasePath();
   const swUrl = `${base}/progressive-sw.js?rev=${STREAM_SW_REV}`;
@@ -570,7 +571,8 @@ export async function registerStreamBridge() {
   try {
     await ensureStreamBridgeRegistered();
     await requestForceClaim(registrationRef);
-    await waitForControllerOnly(3000);
+    const controlling = await waitForControllerOnly(10_000);
+    streamDebug('bridge', 'registerStreamBridge boot', { controlling });
   } catch (error) {
     streamDebugError('bridge', 'registerStreamBridge', error);
   }

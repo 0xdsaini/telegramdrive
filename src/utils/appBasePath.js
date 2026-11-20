@@ -43,3 +43,25 @@ export function getAppOriginPathPrefix() {
   const base = getAppBasePath();
   return `${window.location.origin}${base}`;
 }
+
+/**
+ * Service worker scope is the app base with a trailing slash (e.g. `/telegramdrive/`).
+ * The URL `/telegramdrive` (no slash) is outside that scope, so streaming never attaches.
+ *
+ * @returns {boolean} true if a redirect was started
+ */
+export function redirectToAppBaseIfNeeded() {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  const base = getAppBasePath();
+  if (!base) {
+    return false;
+  }
+  const { pathname, search, hash } = window.location;
+  if (pathname === base) {
+    window.location.replace(`${base}/${search}${hash}`);
+    return true;
+  }
+  return false;
+}

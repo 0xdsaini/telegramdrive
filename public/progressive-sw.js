@@ -457,9 +457,12 @@ self.addEventListener('message', (event) => {
   }
   if (event.data?.type === 'FORCE_CLAIM') {
     event.waitUntil(
-      self.clients.claim().then((clients) => {
-        swDebug('lifecycle', 'FORCE_CLAIM', { clientCount: clients?.length });
-      })
+      self.clients
+        .claim()
+        .then(() => self.clients.matchAll({ type: 'window', includeUncontrolled: true }))
+        .then((clients) => {
+          swDebug('lifecycle', 'FORCE_CLAIM', { clientCount: clients.length });
+        })
     );
     return;
   }
