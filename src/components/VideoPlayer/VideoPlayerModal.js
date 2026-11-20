@@ -608,13 +608,25 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
 
     (async () => {
       try {
-        if (preparePlaybackRef.current) {
-          setIsPreparing(true);
-          await preparePlaybackRef.current();
+        setIsPreparing(true);
+        const preparePromise = preparePlaybackRef.current
+          ? preparePlaybackRef.current()
+          : Promise.resolve();
+        const canStartImmediately =
+          isStreamUrl(streamUrl) && !!navigator.serviceWorker?.controller;
+
+        if (canStartImmediately && !cancelled) {
+          setSrc(streamUrl);
+          bumpControlsVisible();
         }
+
+        await preparePromise;
         if (cancelled) return;
-        setSrc(streamUrl);
-        bumpControlsVisible();
+
+        if (!canStartImmediately) {
+          setSrc(streamUrl);
+          bumpControlsVisible();
+        }
       } catch (prepareError) {
         streamDebugError('video', 'preparePlayback failed', prepareError);
         setLastVideoError(prepareError?.message || 'Could not start streaming playback.');
