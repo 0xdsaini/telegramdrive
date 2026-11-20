@@ -63,6 +63,28 @@ function evictOldest(store, removeCount) {
  * @returns {Promise<{ blob: Blob, durationSec: number|null, source: string }|null>}
  */
 export async function getCachedPoster(chatId, messageId) {
+  const client = typeof window !== 'undefined' ? window.tdClient : null;
+  if (client) {
+    const { ensureTelegramThumbsStore, getPosterFromThumbsDb } = await import(
+      './telegramThumbsStore'
+    );
+    await ensureTelegramThumbsStore(client, chatId);
+    const fromThumbsDb = await getPosterFromThumbsDb(client, chatId, messageId);
+    if (fromThumbsDb?.blob) {
+      await setCachedPoster(chatId, messageId, fromThumbsDb.blob, {
+        durationSec: fromThumbsDb.durationSec,
+        source: fromThumbsDb.source,
+        skipTelegram: true,
+        overwrite: true,
+      });
+      return {
+        blob: fromThumbsDb.blob,
+        durationSec: fromThumbsDb.durationSec ?? null,
+        source: fromThumbsDb.source || 'thumbs-db',
+      };
+    }
+  }
+
   const key = cacheKey(chatId, messageId);
   const record = await withStore('readonly', (store) =>
     new Promise((resolve, reject) => {
@@ -85,28 +107,7 @@ export async function getCachedPoster(chatId, messageId) {
     };
   }
 
-  const client = typeof window !== 'undefined' ? window.tdClient : null;
-  if (!client) {
-    return null;
-  }
-
-  const { getPosterFromThumbsDb } = await import('./telegramThumbsStore');
-  const fromThumbsDb = await getPosterFromThumbsDb(client, chatId, messageId);
-  if (!fromThumbsDb?.blob) {
-    return null;
-  }
-
-  await setCachedPoster(chatId, messageId, fromThumbsDb.blob, {
-    durationSec: fromThumbsDb.durationSec,
-    source: fromThumbsDb.source,
-    skipTelegram: true,
-  });
-
-  return {
-    blob: fromThumbsDb.blob,
-    durationSec: fromThumbsDb.durationSec ?? null,
-    source: fromThumbsDb.source || 'thumbs-db',
-  };
+  return null;
 }
 
 export async function listIndexedDbPostersForChat(chatId) {
@@ -143,7 +144,11 @@ export async function listIndexedDbPostersForChat(chatId) {
 /**
  * When Telegram thumbs.db wins (newer), copy all posters into browser IndexedDB.
  */
-export async function hydrateIndexedDbFromSqliteThumbs(chatId, sqliteDb) {
+export async function hydrateIndexedDbFromSqliteThumbs(
+  chatId,
+  sqliteDb,
+  { overwrite = true } = {},
+) {
   const { getPosterRow, listPosterKeys } = await import('./thumbsDbSql');
   const keys = listPosterKeys(sqliteDb);
   await Promise.all(
@@ -158,6 +163,7 @@ export async function hydrateIndexedDbFromSqliteThumbs(chatId, sqliteDb) {
           durationSec: row.durationSec,
           source: row.source,
           skipTelegram: true,
+          overwrite,
         });
       }),
   );
@@ -174,10 +180,17 @@ export async function setCachedPoster(
   chatId,
   messageId,
   blob,
-  { durationSec = null, source = 'tdlib', skipTelegram = false } = {},
+  {
+    durationSec = null,
+    source = 'tdlib',
+    skipTelegram = false,
+    overwrite = false,
+  } = {},
 ) {
   const key = cacheKey(chatId, messageId);
   const now = Date.now();
+
+  let wrote = false;
 
   await withStore('readwrite', async (store) => {
     const count = await new Promise((resolve, reject) => {
@@ -192,6 +205,10 @@ export async function setCachedPoster(
       req.onerror = () => reject(req.error);
     });
 
+    if (existing?.blob && !overwrite) {
+      return;
+    }
+
     if (!existing && count >= MAX_ENTRIES) {
       await evictOldest(store, count - MAX_ENTRIES + 1);
     }
@@ -204,9 +221,10 @@ export async function setCachedPoster(
       accessedAt: now,
       createdAt: existing?.createdAt ?? now,
     });
+    wrote = true;
   });
 
-  if (!skipTelegram) {
+  if (!skipTelegram && wrote) {
     const client = typeof window !== 'undefined' ? window.tdClient : null;
     if (client) {
       try {
