@@ -88,6 +88,13 @@ export async function getCachedPoster(chatId, messageId) {
   };
 }
 
+export async function deleteCachedPoster(chatId, messageId) {
+  const key = cacheKey(chatId, messageId);
+  await withStore('readwrite', (store) => {
+    store.delete(key);
+  });
+}
+
 export async function setCachedPoster(chatId, messageId, blob, { durationSec = null, source = 'tdlib' } = {}) {
   const key = cacheKey(chatId, messageId);
   const now = Date.now();

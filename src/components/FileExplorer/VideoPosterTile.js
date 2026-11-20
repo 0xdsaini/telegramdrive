@@ -67,12 +67,16 @@ const VideoPosterTile = ({
         if (cancelled) {
           return;
         }
-        if (resolved.posterBlob) {
+        if (resolved.posterBlob && !resolved.needsBackfill) {
           applyPosterBlob(resolved.posterBlob, resolved.durationSec);
           return;
         }
 
-        if (resolved.needsBackfill && fileName) {
+        if (resolved.durationSec != null) {
+          setDurationSec(resolved.durationSec);
+        }
+
+        if (fileName) {
           setIsBackfilling(true);
           setFailed(false);
           const backfill = await captureVideoPosterFromStream(
@@ -85,7 +89,10 @@ const VideoPosterTile = ({
             return;
           }
           if (backfill.posterBlob) {
-            applyPosterBlob(backfill.posterBlob, backfill.durationSec);
+            applyPosterBlob(
+              backfill.posterBlob,
+              backfill.durationSec ?? resolved.durationSec,
+            );
           } else {
             setPosterUrl(null);
             setFailed(true);

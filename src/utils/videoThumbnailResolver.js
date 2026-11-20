@@ -1,5 +1,5 @@
-import { getCachedPoster, setCachedPoster } from './thumbnailCache';
-import { downloadSmallTelegramFile } from './downloadSmallTelegramFile';
+import { getCachedPoster, deleteCachedPoster } from './thumbnailCache';
+import { isTrustedPosterSource } from './posterSources';
 
 const MAX_CONCURRENT = 4;
 let active = 0;
@@ -10,19 +10,17 @@ function runNext() {
     return;
   }
   active += 1;
-  const { run, release } = waitQueue.shift();
+  const { run } = waitQueue.shift();
   Promise.resolve()
     .then(run)
     .finally(() => {
       active -= 1;
-      release();
       runNext();
     });
 }
 
 function withConcurrency(fn) {
   return new Promise((resolve, reject) => {
-    const release = () => {};
     const run = async () => {
       try {
         resolve(await fn());
@@ -30,28 +28,12 @@ function withConcurrency(fn) {
         reject(e);
       }
     };
-    waitQueue.push({ run, release });
+    waitQueue.push({ run });
     runNext();
   });
 }
 
 const inflight = new Map();
-
-function minithumbnailToBlob(minithumbnail) {
-  if (!minithumbnail?.data || typeof minithumbnail.data !== 'string') {
-    return null;
-  }
-  try {
-    const binary = atob(minithumbnail.data);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i += 1) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    return new Blob([bytes], { type: 'image/jpeg' });
-  } catch {
-    return null;
-  }
-}
 
 function durationFromDocument(document) {
   const attrs = document?.attributes;
@@ -66,35 +48,19 @@ function durationFromDocument(document) {
   return null;
 }
 
-export function extractVideoThumbMeta(message) {
+export function extractVideoDurationFromMessage(message) {
   const content = message?.content;
-  let durationSec = null;
-  let thumbFileId = null;
-
-  const miniBlob = minithumbnailToBlob(message?.minithumbnail);
-
   if (content?.['@type'] === 'messageVideo') {
-    const video = content.video;
-    if (typeof video?.duration === 'number') {
-      durationSec = video.duration;
-    }
-    const thumb = video?.thumbnail;
-    if (thumb?.file?.id) {
-      thumbFileId = thumb.file.id;
-    }
-  } else if (content?.['@type'] === 'messageDocument') {
-    const doc = content.document;
-    durationSec = durationFromDocument(doc);
-    const thumb = doc?.thumbnail;
-    if (thumb?.file?.id) {
-      thumbFileId = thumb.file.id;
-    }
+    const d = content.video?.duration;
+    return typeof d === 'number' ? d : null;
   }
-
-  return { miniBlob, thumbFileId, durationSec };
+  if (content?.['@type'] === 'messageDocument') {
+    return durationFromDocument(content.document);
+  }
+  return null;
 }
 
-async function fetchPosterFromTelegram(telegramClient, chatId, messageId) {
+async function fetchDurationFromTelegram(telegramClient, chatId, messageId) {
   const message = await telegramClient.send({
     '@type': 'getMessage',
     chat_id: chatId,
@@ -105,55 +71,38 @@ async function fetchPosterFromTelegram(telegramClient, chatId, messageId) {
     throw new Error(message.message || 'getMessage failed');
   }
 
-  const { miniBlob, thumbFileId, durationSec } = extractVideoThumbMeta(message);
-  let posterBlob = null;
-  let source = null;
-
-  if (thumbFileId) {
-    try {
-      posterBlob = await downloadSmallTelegramFile(telegramClient, thumbFileId);
-      source = 'tdlib';
-    } catch {
-      posterBlob = null;
-    }
-  }
-
-  if (!posterBlob && miniBlob) {
-    posterBlob = miniBlob;
-    source = 'minithumbnail';
-  }
-
-  if (posterBlob) {
-    await setCachedPoster(chatId, messageId, posterBlob, { durationSec, source });
-  }
-
-  return { posterBlob, durationSec, source };
-}
-
-function wrapPosterResult(result) {
-  return {
-    ...result,
-    needsBackfill: !result.posterBlob,
-  };
+  return { durationSec: extractVideoDurationFromMessage(message) };
 }
 
 /**
- * Resolve a video poster from IndexedDB or Telegram (minithumbnail / document|video thumbnail).
- * @returns {Promise<{ posterBlob: Blob|null, durationSec: number|null, source: string|null, needsBackfill: boolean }>}
+ * Only returns cached client/upload posters or metadata for stream extraction.
+ * Telegram minithumbnail / server thumbs are ignored (not meaningful for documents or messageVideo).
  */
 export async function resolveVideoPoster(telegramClient, chatId, messageId) {
   if (!telegramClient || !chatId || !messageId) {
-    return { posterBlob: null, durationSec: null, source: null, needsBackfill: false };
+    return {
+      posterBlob: null,
+      durationSec: null,
+      source: null,
+      needsBackfill: false,
+    };
   }
 
   const cached = await getCachedPoster(chatId, messageId);
   if (cached?.blob) {
-    return {
-      posterBlob: cached.blob,
-      durationSec: cached.durationSec,
-      source: cached.source,
-      needsBackfill: false,
-    };
+    if (isTrustedPosterSource(cached.source)) {
+      return {
+        posterBlob: cached.blob,
+        durationSec: cached.durationSec,
+        source: cached.source,
+        needsBackfill: false,
+      };
+    }
+    try {
+      await deleteCachedPoster(chatId, messageId);
+    } catch {
+      /* ignore */
+    }
   }
 
   const key = `${chatId}:${messageId}`;
@@ -161,9 +110,24 @@ export async function resolveVideoPoster(telegramClient, chatId, messageId) {
     return inflight.get(key);
   }
 
-  const promise = withConcurrency(() => fetchPosterFromTelegram(telegramClient, chatId, messageId))
-    .then(wrapPosterResult)
-    .finally(() => inflight.delete(key));
+  const promise = withConcurrency(async () => {
+    let durationSec = cached?.durationSec ?? null;
+    try {
+      const meta = await fetchDurationFromTelegram(telegramClient, chatId, messageId);
+      if (meta.durationSec != null) {
+        durationSec = meta.durationSec;
+      }
+    } catch {
+      /* duration optional */
+    }
+    return {
+      posterBlob: null,
+      durationSec,
+      source: null,
+      needsBackfill: true,
+    };
+  }).finally(() => inflight.delete(key));
+
   inflight.set(key, promise);
   return promise;
 }

@@ -12,7 +12,7 @@ const MAX_BACKFILL_CONCURRENT = 2;
 let backfillActive = 0;
 const backfillWaitQueue = [];
 
-const attemptedBackfill = new Set();
+const backfillInflight = new Map();
 
 function withBackfillSlot(fn) {
   return new Promise((resolve, reject) => {
@@ -55,12 +55,11 @@ export async function captureVideoPosterFromStream(
   { timeoutMs = 60000 } = {},
 ) {
   const key = `${chatId}:${messageId}`;
-  if (attemptedBackfill.has(key)) {
-    return { posterBlob: null, durationSec: null };
+  if (backfillInflight.has(key)) {
+    return backfillInflight.get(key);
   }
-  attemptedBackfill.add(key);
 
-  return withBackfillSlot(async () => {
+  const promise = withBackfillSlot(async () => {
     if (!telegramClient || !chatId || !messageId || !fileName) {
       return { posterBlob: null, durationSec: null };
     }
@@ -104,4 +103,7 @@ export async function captureVideoPosterFromStream(
       video.load();
     }
   });
+
+  backfillInflight.set(key, promise);
+  return promise.finally(() => backfillInflight.delete(key));
 }
