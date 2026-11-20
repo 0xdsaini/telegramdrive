@@ -68,7 +68,7 @@ export function installStreamDebugHelpers() {
   window.resetStreamServiceWorker = async () => {
     const regs = await navigator.serviceWorker?.getRegistrations?.();
     await Promise.all((regs || []).map((r) => r.unregister()));
-    sessionStorage.removeItem('stream-sw-reload-attempted');
+    sessionStorage.removeItem('stream-sw-reload-attempted'); // STREAM_SW_RELOAD_KEY in streamBridge
     window.location.reload();
   };
   streamDebug(

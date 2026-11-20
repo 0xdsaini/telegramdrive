@@ -42,16 +42,28 @@ const AppContent = () => {
   }, [telegramClient]);
 
   useEffect(() => {
+    let hiddenAt = null;
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        hiddenAt = Date.now();
+        return;
+      }
+      if (document.visibilityState === 'visible') {
+        const idleMs = hiddenAt != null ? Date.now() - hiddenAt : 0;
+        hiddenAt = null;
+        refreshStreamBridgeAfterIdle(telegramClient, { idleMs });
+      }
+    };
     const onWake = () => {
       if (document.visibilityState === 'visible') {
         refreshStreamBridgeAfterIdle(telegramClient);
       }
     };
-    document.addEventListener('visibilitychange', onWake);
+    document.addEventListener('visibilitychange', onVisibility);
     window.addEventListener('focus', onWake);
     window.addEventListener('pageshow', onWake);
     return () => {
-      document.removeEventListener('visibilitychange', onWake);
+      document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('focus', onWake);
       window.removeEventListener('pageshow', onWake);
     };

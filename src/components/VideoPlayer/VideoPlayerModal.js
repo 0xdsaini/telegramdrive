@@ -85,6 +85,7 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [isWaiting, setIsWaiting] = useState(false);
+  const [isPreparing, setIsPreparing] = useState(false);
   const [scrubPreview, setScrubPreview] = useState(null);
 
   const bumpControlsVisible = useCallback(() => {
@@ -287,7 +288,7 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
             streamDebug('video', 'retry playback after media error', { code: video.error.code });
             (async () => {
               try {
-                await preparePlaybackRef.current();
+                await preparePlaybackRef.current({ force: true });
                 if (cancelled) return;
                 if (previousSrc && isStreamUrl(previousSrc)) {
                   toggleStreamInUse(previousSrc, false);
@@ -299,7 +300,8 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
               } catch (retryError) {
                 streamDebugError('video', 'playback retry failed', retryError);
                 setLastVideoError(
-                  retryError?.message || 'Playback failed after idle. Hard-refresh the tab and try again.'
+                  retryError?.message
+                    || 'Playback failed after idle. Switch back to this tab and try Play again, or open the app in a new tab.'
                 );
               }
             })();
@@ -340,6 +342,7 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
     (async () => {
       try {
         if (preparePlaybackRef.current) {
+          setIsPreparing(true);
           await preparePlaybackRef.current();
         }
         if (cancelled) return;
@@ -348,11 +351,14 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
       } catch (prepareError) {
         streamDebugError('video', 'preparePlayback failed', prepareError);
         setLastVideoError(prepareError?.message || 'Could not start streaming playback.');
+      } finally {
+        if (!cancelled) setIsPreparing(false);
       }
     })();
 
     return () => {
       cancelled = true;
+      setIsPreparing(false);
       handlers.forEach(([name, fn]) => video.removeEventListener(name, fn));
       video.removeEventListener('timeupdate', onTimeUpdate);
       video.pause();
@@ -438,11 +444,17 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
         >
           <video ref={videoRef} className="yt-player-video" playsInline />
 
-          {isWaiting && !lastVideoError ? (
+          {(isPreparing || isWaiting) && !lastVideoError ? (
             <div className="yt-player-spinner" aria-hidden />
           ) : null}
 
-          {!isPlaying && !isWaiting && !lastVideoError ? (
+          {isPreparing && !lastVideoError ? (
+            <div className="yt-player-preparing" aria-live="polite">
+              Activating stream worker…
+            </div>
+          ) : null}
+
+          {!isPlaying && !isWaiting && !isPreparing && !lastVideoError ? (
             <button
               type="button"
               className="yt-player-big-play"

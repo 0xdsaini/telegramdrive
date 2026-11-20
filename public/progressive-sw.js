@@ -455,6 +455,14 @@ self.addEventListener('message', (event) => {
     self.skipWaiting();
     return;
   }
+  if (event.data?.type === 'FORCE_CLAIM') {
+    event.waitUntil(
+      self.clients.claim().then((clients) => {
+        swDebug('lifecycle', 'FORCE_CLAIM', { clientCount: clients?.length });
+      })
+    );
+    return;
+  }
   if (event.data?.type === 'toggleStreamInUse') {
     toggleStreamInUse(event.data);
   }

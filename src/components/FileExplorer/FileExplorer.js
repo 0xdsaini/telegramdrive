@@ -84,7 +84,7 @@ const FileExplorer = () => {
   } = useContext(TelegramContext);
 
   const preparePlayback = useCallback(
-    () => prepareForStreaming(telegramClient),
+    (opts) => prepareForStreaming(telegramClient, opts),
     [telegramClient]
   );
   
@@ -789,9 +789,7 @@ const FileExplorer = () => {
       }
 
       setError(null);
-      setSuccess(`Activating stream worker for ${fileName}...`);
-      await prepareForStreaming(telegramClient);
-      setSuccess(`Opening stream for ${fileName}...`);
+      setSuccess(`Resolving ${fileName} on Telegram…`);
 
       const resolved = await resolveTelegramFile(
         telegramClient,
@@ -813,6 +811,7 @@ const FileExplorer = () => {
       setSuccess(null);
     } catch (playError) {
       streamDebugError('play', 'handleStreamPlay failed', playError);
+      setSuccess(null);
       setError(playError.message || 'Failed to start streaming playback.');
     }
   };

@@ -27,6 +27,38 @@
     <title>React App</title>
   </head>
   <body>
+    <script>
+      (function bootstrapStreamServiceWorker() {
+        if (!('serviceWorker' in navigator)) return;
+        var swUrl = '%PUBLIC_URL%/progressive-sw.js?rev=7';
+        if (!swUrl.startsWith('http')) {
+          swUrl = new URL(swUrl.replace(/^\.\//, '/'), window.location.origin).href;
+        }
+        var scope = new URL('.', swUrl).href;
+        navigator.serviceWorker.register(swUrl, { scope: scope, updateViaCache: 'none' }).then(function (reg) {
+          function pokeClaim() {
+            var worker = reg.active || reg.waiting || reg.installing;
+            if (worker) worker.postMessage({ type: 'FORCE_CLAIM' });
+            if (reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+          }
+          if (navigator.serviceWorker.controller) return;
+          pokeClaim();
+          reg.addEventListener('updatefound', function () { pokeClaim(); });
+          var bootKey = 'stream-sw-early-claim';
+          navigator.serviceWorker.ready.then(function () {
+            if (navigator.serviceWorker.controller) return;
+            pokeClaim();
+            setTimeout(function () {
+              if (navigator.serviceWorker.controller) return;
+              pokeClaim();
+              if (sessionStorage.getItem(bootKey)) return;
+              sessionStorage.setItem(bootKey, '1');
+              window.location.reload();
+            }, 400);
+          });
+        }).catch(function () {});
+      })();
+    </script>
     <script src="%PUBLIC_URL%/tdweb.js"></script>
     <noscript>You need to enable JavaScript to run this app.</noscript>
     <div id="root"></div>

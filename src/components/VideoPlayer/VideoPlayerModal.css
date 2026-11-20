@@ -146,6 +146,21 @@
   z-index: 2;
 }
 
+.yt-player-preparing {
+  position: absolute;
+  bottom: 72px;
+  left: 16px;
+  right: 16px;
+  padding: 10px 14px;
+  text-align: center;
+  font-size: 0.85rem;
+  color: #f0f0f0;
+  background: rgba(0, 0, 0, 0.65);
+  border-radius: 8px;
+  z-index: 2;
+  pointer-events: none;
+}
+
 @keyframes yt-spin {
   to {
     transform: rotate(360deg);
