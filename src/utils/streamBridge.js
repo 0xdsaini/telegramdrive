@@ -18,6 +18,51 @@ let lastPrepareAt = 0;
 let lastPrepareController = false;
 let reclaimInFlight = null;
 
+let playbackModalOpen = false;
+const playbackFileIds = new Set();
+const playbackIdleListeners = new Set();
+
+export function setPlaybackModalOpen(open) {
+  const wasOpen = playbackModalOpen;
+  playbackModalOpen = !!open;
+  if (wasOpen && !playbackModalOpen) {
+    playbackIdleListeners.forEach((fn) => {
+      try {
+        fn();
+      } catch {
+        /* ignore */
+      }
+    });
+  }
+}
+
+export function registerPlaybackFileId(fileId) {
+  if (fileId != null && fileId !== '') {
+    playbackFileIds.add(String(fileId));
+  }
+}
+
+export function unregisterPlaybackFileId(fileId) {
+  if (fileId != null && fileId !== '') {
+    playbackFileIds.delete(String(fileId));
+  }
+}
+
+export function isPosterBackfillAllowed(fileId) {
+  if (playbackModalOpen) {
+    return false;
+  }
+  if (fileId != null && playbackFileIds.has(String(fileId))) {
+    return false;
+  }
+  return true;
+}
+
+export function subscribePlaybackIdle(listener) {
+  playbackIdleListeners.add(listener);
+  return () => playbackIdleListeners.delete(listener);
+}
+
 function withFilePartQueue(fileId, task) {
   const prev = partRequestChains.get(fileId) ?? Promise.resolve();
   const run = prev.catch(() => {}).then(task);

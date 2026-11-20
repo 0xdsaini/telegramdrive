@@ -9,7 +9,12 @@ import { isStreamableMediaFileName, isVideoFileName, mimeTypeFromFileName } from
 import { generateVideoPosterJpeg } from '../../utils/generateVideoPosterJpeg';
 import { setCachedPoster } from '../../utils/thumbnailCache';
 import { streamDebug, streamDebugError } from '../../utils/streamDebug';
-import { prepareForStreaming } from '../../utils/streamBridge';
+import {
+  prepareForStreaming,
+  registerPlaybackFileId,
+  setPlaybackModalOpen,
+  unregisterPlaybackFileId,
+} from '../../utils/streamBridge';
 import { createEmptyFileStructure, findFolderByPath, createFolder, deleteFolder, moveFolder, addFile, deleteFile, moveFile } from '../../utils/fileStructureUtils';
 import { TelegramContext } from '../../context/TelegramContext';
 import UntrackedFilesPanel from './UntrackedFilesPanel';
@@ -72,7 +77,7 @@ const FileExplorer = () => {
   const [success, setSuccess] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
-  const [streamPlayer, setStreamPlayer] = useState({ open: false, url: '', title: '' });
+  const [streamPlayer, setStreamPlayer] = useState({ open: false, url: '', title: '', fileId: null });
   
   // Access the Telegram context
   const { 
@@ -90,6 +95,13 @@ const FileExplorer = () => {
     (opts) => prepareForStreaming(telegramClient, opts),
     [telegramClient]
   );
+
+  useEffect(() => {
+    setPlaybackModalOpen(streamPlayer.open);
+    if (!streamPlayer.open && streamPlayer.fileId != null) {
+      unregisterPlaybackFileId(streamPlayer.fileId);
+    }
+  }, [streamPlayer.open, streamPlayer.fileId]);
   
   // Update current folder when file structure or path changes
   useEffect(() => {
@@ -845,7 +857,13 @@ const FileExplorer = () => {
       });
       streamDebug('play', 'stream URL built', { streamUrl, mime: mimeTypeFromFileName(fileName) });
 
-      setStreamPlayer({ open: true, url: streamUrl, title: fileName });
+      registerPlaybackFileId(resolved.fileId);
+      setStreamPlayer({
+        open: true,
+        url: streamUrl,
+        title: fileName,
+        fileId: resolved.fileId,
+      });
       setSuccess(null);
     } catch (playError) {
       streamDebugError('play', 'handleStreamPlay failed', playError);
@@ -1781,7 +1799,12 @@ const FileExplorer = () => {
         title={streamPlayer.title}
         streamUrl={streamPlayer.url}
         preparePlayback={preparePlayback}
-        onClose={() => setStreamPlayer({ open: false, url: '', title: '' })}
+        onClose={() => {
+          if (streamPlayer.fileId != null) {
+            unregisterPlaybackFileId(streamPlayer.fileId);
+          }
+          setStreamPlayer({ open: false, url: '', title: '', fileId: null });
+        }}
       />
     </div>
   );

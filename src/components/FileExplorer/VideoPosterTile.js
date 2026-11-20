@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { FaPlay } from 'react-icons/fa';
 import { resolveVideoPoster } from '../../utils/videoThumbnailResolver';
 import { captureVideoPosterFromStream } from '../../utils/captureVideoPosterFromStream';
+import { subscribePlaybackIdle } from '../../utils/streamBridge';
 import { formatVideoDuration } from '../../utils/mimeTypes';
 
 const VideoPosterTile = ({
@@ -19,6 +20,7 @@ const VideoPosterTile = ({
   const [failed, setFailed] = useState(false);
   const [isBackfilling, setIsBackfilling] = useState(false);
   const [visible, setVisible] = useState(false);
+  const [backfillPass, setBackfillPass] = useState(0);
 
   const applyPosterBlob = (posterBlob, dur) => {
     if (!posterBlob) {
@@ -52,6 +54,12 @@ const VideoPosterTile = ({
     );
     observer.observe(el);
     return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    return subscribePlaybackIdle(() => {
+      setBackfillPass((p) => p + 1);
+    });
   }, []);
 
   useEffect(() => {
@@ -93,6 +101,8 @@ const VideoPosterTile = ({
               backfill.posterBlob,
               backfill.durationSec ?? resolved.durationSec,
             );
+          } else if (backfill.skipped) {
+            setFailed(false);
           } else {
             setPosterUrl(null);
             setFailed(true);
@@ -119,7 +129,7 @@ const VideoPosterTile = ({
         objectUrlRef.current = null;
       }
     };
-  }, [visible, telegramClient, chatId, messageId, fileName]);
+  }, [visible, telegramClient, chatId, messageId, fileName, backfillPass]);
 
   const durationLabel = formatVideoDuration(durationSec);
 

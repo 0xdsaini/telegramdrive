@@ -1,14 +1,18 @@
 import { resolveTelegramFile } from './telegramFileResolver';
 import { getStreamUrl } from './streamUrl';
 import { mimeTypeFromFileName } from './mimeTypes';
-import { prepareForStreaming } from './streamBridge';
+import {
+  isPosterBackfillAllowed,
+  prepareForStreaming,
+  toggleStreamInUse,
+} from './streamBridge';
 import { setCachedPoster } from './thumbnailCache';
 import {
   capturePosterAfterSeeks,
   waitForVideoEvent,
 } from './videoPosterCanvas';
 
-const MAX_BACKFILL_CONCURRENT = 2;
+const MAX_BACKFILL_CONCURRENT = 1;
 let backfillActive = 0;
 const backfillWaitQueue = [];
 
@@ -43,9 +47,28 @@ function runNextBackfill() {
   }
 }
 
+function waitForPosterSlot(fileId, maxMs = 120_000) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const tick = () => {
+      if (isPosterBackfillAllowed(fileId)) {
+        resolve(true);
+        return;
+      }
+      if (Date.now() - start >= maxMs) {
+        resolve(false);
+        return;
+      }
+      setTimeout(tick, 400);
+    };
+    tick();
+  });
+}
+
 /**
  * Lazy backfill: decode one frame via progressive stream URL and cache in IndexedDB only.
- * @returns {Promise<{ posterBlob: Blob|null, durationSec: number|null }>}
+ * Does not run while the video player is open or the same file is playing (avoids TDLib/SW contention).
+ * @returns {Promise<{ posterBlob: Blob|null, durationSec: number|null, skipped?: boolean }>}
  */
 export async function captureVideoPosterFromStream(
   telegramClient,
@@ -64,9 +87,20 @@ export async function captureVideoPosterFromStream(
       return { posterBlob: null, durationSec: null };
     }
 
+    let resolved;
+    try {
+      resolved = await resolveTelegramFile(telegramClient, chatId, fileName, messageId);
+    } catch {
+      return { posterBlob: null, durationSec: null };
+    }
+
+    const allowed = await waitForPosterSlot(resolved.fileId);
+    if (!allowed) {
+      return { posterBlob: null, durationSec: null, skipped: true };
+    }
+
     await prepareForStreaming(telegramClient, { force: false });
 
-    const resolved = await resolveTelegramFile(telegramClient, chatId, fileName, messageId);
     const mimeType = mimeTypeFromFileName(fileName);
     const streamUrl = getStreamUrl({
       fileId: resolved.fileId,
@@ -79,7 +113,9 @@ export async function captureVideoPosterFromStream(
     video.muted = true;
     video.playsInline = true;
     video.crossOrigin = 'anonymous';
-    video.preload = 'auto';
+    video.preload = 'metadata';
+
+    toggleStreamInUse(streamUrl, true);
 
     try {
       video.src = streamUrl;
@@ -99,8 +135,10 @@ export async function captureVideoPosterFromStream(
     } catch {
       return { posterBlob: null, durationSec: null };
     } finally {
+      video.pause();
       video.removeAttribute('src');
       video.load();
+      toggleStreamInUse(streamUrl, false);
     }
   });
 
