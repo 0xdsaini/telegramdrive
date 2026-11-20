@@ -1,5 +1,12 @@
 import { TELEGRAM_API_ID, TELEGRAM_API_HASH } from './constants';
-import { createEmptyFileStructure, parseFileStructure, serializeFileStructure } from '../../utils/fileStructureUtils';
+import {
+  createEmptyFileStructure,
+  parseFileStructure,
+  serializeFileStructure,
+  getMetadataTimestampMs,
+  stampFileStructureUpdatedAt,
+  ensureMetadataUpdatedAtFromTelegram,
+} from '../../utils/fileStructureUtils';
 
 import React, { useState, useEffect, useRef, useCallback, useContext } from 'react';
 import ChatGroupSelector from '../ChatGroupSelector/ChatGroupSelector';
@@ -188,9 +195,16 @@ const TelegramMessenger = () => {
 
     console.log("inside downloadFileandExtractMetadata, typeof text: ", typeof text);
 
-    return {"text": text, "id": foundId};
-    // return text;
+    const editDateUnix =
+      foundMessage.edit_date > 0 ? foundMessage.edit_date : foundMessage.date;
+
+    return { text, id: foundId, editDateUnix };
   }
+
+  const loadFileStructureFromTelegram = (metadataText, editDateUnix) => {
+    const parsed = parseFileStructure(metadataText);
+    return ensureMetadataUpdatedAtFromTelegram(parsed, editDateUnix);
+  };
 
   // Find message with METADATA_STORAGE prefix to enable message editing
   const findMessageId = useCallback(async () => {
@@ -270,7 +284,10 @@ const TelegramMessenger = () => {
             if (true) {
               const result = await downloadFileandExtractMetadata(1234);
               console.log("downloadFileandExtractMetadata(inside findMessageId->searchChatMessages)", result.text, typeof result.text);
-              const parsedStructure = parseFileStructure(result.text);
+              const parsedStructure = loadFileStructureFromTelegram(
+                result.text,
+                result.editDateUnix
+              );
               console.log("Loaded file structure:", parsedStructure);
               setFileStructure(parsedStructure);
               setIsFileStructureLoaded(true);
@@ -333,7 +350,10 @@ const TelegramMessenger = () => {
                 if (true) {
                   const result = await downloadFileandExtractMetadata(1234);
                   console.log("downloadFileandExtractMetadata(inside findMessageId->getChatHistory)", result.text, typeof result.text);
-                  const parsedStructure = parseFileStructure(result.text);
+                  const parsedStructure = loadFileStructureFromTelegram(
+                    result.text,
+                    result.editDateUnix
+                  );
                   console.log("Loaded file structure:", parsedStructure);
                   setFileStructure(parsedStructure);
                   setIsFileStructureLoaded(true);
@@ -830,32 +850,54 @@ const TelegramMessenger = () => {
   // Update file structure in Telegram
   const updateFileStructure = async (updatedStructure) => {
     try {
-      setFileStructure(updatedStructure);
-      
-      // Serialize the file structure to message text
-      const messageText = serializeFileStructure(updatedStructure);
-      
-      // If we have a messageId, edit that message, otherwise send a new one
       if (!selectedChatId) {
         throw new Error('No chat selected. Please select a chat group first.');
       }
-      
+
+      // Re-fetch Telegram metadata so two devices do not clobber each other.
+      if (messageId) {
+        const remote = await downloadFileandExtractMetadata(messageId);
+        const remoteStructure = loadFileStructureFromTelegram(
+          remote.text,
+          remote.editDateUnix
+        );
+        const localTs = getMetadataTimestampMs(updatedStructure) ?? 0;
+        const remoteTs =
+          getMetadataTimestampMs(remoteStructure) ??
+          (remote.editDateUnix ? remote.editDateUnix * 1000 : 0);
+
+        if (remoteTs > localTs) {
+          console.warn(
+            'Remote metadata is newer than this device; refreshing local copy instead of uploading.',
+            { localTs, remoteTs }
+          );
+          setFileStructure(remoteStructure);
+          setStatus(
+            'Metadata was updated on another device. Your view has been refreshed — retry your change.'
+          );
+          return false;
+        }
+      }
+
+      const stampedStructure = stampFileStructureUpdatedAt(updatedStructure);
+      setFileStructure(stampedStructure);
+
+      const messageText = serializeFileStructure(stampedStructure);
+
       console.log('Updating file structure in chat ID:', selectedChatId);
-      
+
       if (messageId) {
         await editMessage(messageText, messageId, selectedChatId);
       } else {
         const result = await sendMessage(messageText, selectedChatId);
-        // If this is the first time sending the message, we need to update the messageId
         console.log("ResultId(in updateFileStructure):", result.id);
         if (result && result.id && !messageId) {
           setMessageId(result.id);
           setContextMessageId(result.id);
-          // Save the message ID to localStorage
           localStorage.setItem(MESSAGE_ID_KEY, result.id.toString());
         }
       }
-      
+
       return true;
     } catch (error) {
       console.error('Failed to update file structure:', error);

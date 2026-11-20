@@ -15,6 +15,48 @@ export const createEmptyFileStructure = () => {
 };
 
 /**
+ * UTC timestamp from metadata JSON (milliseconds since epoch), or null if missing/invalid.
+ * @param {Object} fileStructure
+ * @returns {number|null}
+ */
+export const getMetadataTimestampMs = (fileStructure) => {
+  const updatedAt = fileStructure?.updatedAt;
+  if (!updatedAt || typeof updatedAt !== 'string') {
+    return null;
+  }
+  const parsed = Date.parse(updatedAt);
+  return Number.isNaN(parsed) ? null : parsed;
+};
+
+/**
+ * @param {Object} fileStructure
+ * @param {Date} [date]
+ * @returns {Object}
+ */
+export const stampFileStructureUpdatedAt = (fileStructure, date = new Date()) => {
+  return {
+    ...fileStructure,
+    updatedAt: date.toISOString(),
+  };
+};
+
+/**
+ * Legacy metadata without updatedAt: infer from Telegram message edit/send date (unix seconds).
+ * @param {Object} fileStructure
+ * @param {number} [editDateUnix]
+ * @returns {Object}
+ */
+export const ensureMetadataUpdatedAtFromTelegram = (fileStructure, editDateUnix) => {
+  if (getMetadataTimestampMs(fileStructure) != null) {
+    return fileStructure;
+  }
+  if (!editDateUnix) {
+    return fileStructure;
+  }
+  return stampFileStructureUpdatedAt(fileStructure, new Date(editDateUnix * 1000));
+};
+
+/**
  * Parses a message text to extract the file structure JSON
  * @param {string} messageText - The text content of the message
  * @returns {Object|null} Parsed file structure or null if invalid
