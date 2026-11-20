@@ -10,7 +10,7 @@ import { streamDebug, streamDebugError } from './streamDebug';
 let registered = false;
 let activeClient = null;
 let registrationRef = null;
-const STREAM_SW_REV = 6;
+const STREAM_SW_REV = 7;
 const partRequestChains = new Map();
 
 function withFilePartQueue(fileId, task) {
@@ -165,6 +165,62 @@ async function handleStreamRequest(event) {
 export function setStreamBridgeClient(telegramClient) {
   activeClient = telegramClient;
   streamDebug('bridge', 'setStreamBridgeClient', { ready: !!telegramClient });
+}
+
+async function assertTdlibResponsive(client, timeoutMs = 10_000) {
+  if (!client?.send) {
+    throw new Error('Telegram client is not ready. Refresh the page and try again.');
+  }
+  const timeout = new Promise((_, reject) => {
+    setTimeout(() => reject(new Error('Telegram connection timed out. Refresh the page and try again.')), timeoutMs);
+  });
+  try {
+    await Promise.race([client.send({ '@type': 'getNetworkStatistics' }), timeout]);
+  } catch (error) {
+    const msg = error?.message || String(error);
+    if (/timed out|not ready/i.test(msg)) {
+      throw error instanceof Error ? error : new Error(msg);
+    }
+    streamDebug('bridge', 'getNetworkStatistics probe failed (continuing)', { msg });
+  }
+}
+
+/**
+ * Re-claim the stream service worker and verify TDLib before playback (idle tabs often lose SW control).
+ */
+export async function prepareForStreaming(telegramClient, { timeoutMs = 15_000 } = {}) {
+  if (telegramClient) {
+    setStreamBridgeClient(telegramClient);
+  }
+  await ensureStreamBridgeRegistered();
+  await waitForStreamServiceWorkerControl({ timeoutMs });
+
+  if (!navigator.serviceWorker?.controller) {
+    throw new Error(
+      'Stream service worker is not controlling this tab. Hard-refresh (Cmd+Shift+R), then play again.'
+    );
+  }
+
+  if (telegramClient) {
+    await assertTdlibResponsive(telegramClient);
+  }
+}
+
+export async function refreshStreamBridgeAfterIdle(telegramClient) {
+  try {
+    streamDebug('bridge', 'refreshStreamBridgeAfterIdle');
+    await ensureStreamBridgeRegistered();
+    if (registrationRef?.waiting) {
+      registrationRef.waiting.postMessage({ type: 'SKIP_WAITING' });
+    }
+    await registrationRef?.update?.();
+    await waitForStreamServiceWorkerControl({ timeoutMs: 5000 });
+    if (telegramClient) {
+      setStreamBridgeClient(telegramClient);
+    }
+  } catch (error) {
+    streamDebugError('bridge', 'refreshStreamBridgeAfterIdle', error);
+  }
 }
 
 async function ensureStreamBridgeRegistered() {

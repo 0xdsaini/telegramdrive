@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useContext } from 'react';
+import React, { useState, useRef, useEffect, useContext, useCallback } from 'react';
 import './FileExplorer.css';
 import { FaFile, FaFileImage, FaFileAlt, FaFileCode, FaFolder, FaTrash, FaArrowUp, FaPlus, FaUpload, FaHome, FaCheck, FaDownload, FaPlay } from 'react-icons/fa';
 import VideoPlayerModal from '../VideoPlayer/VideoPlayerModal';
@@ -6,7 +6,7 @@ import { resolveTelegramFile } from '../../utils/telegramFileResolver';
 import { getStreamUrl } from '../../utils/streamUrl';
 import { isStreamableMediaFileName, mimeTypeFromFileName } from '../../utils/mimeTypes';
 import { streamDebug, streamDebugError } from '../../utils/streamDebug';
-import { waitForStreamServiceWorkerControl } from '../../utils/streamBridge';
+import { prepareForStreaming } from '../../utils/streamBridge';
 import { createEmptyFileStructure, findFolderByPath, createFolder, deleteFolder, moveFolder, addFile, deleteFile, moveFile } from '../../utils/fileStructureUtils';
 import { TelegramContext } from '../../context/TelegramContext';
 import UntrackedFilesPanel from './UntrackedFilesPanel';
@@ -82,6 +82,11 @@ const FileExplorer = () => {
     clearDownloadedFiles,
     isDryModeEnabled
   } = useContext(TelegramContext);
+
+  const preparePlayback = useCallback(
+    () => prepareForStreaming(telegramClient),
+    [telegramClient]
+  );
   
   // Update current folder when file structure or path changes
   useEffect(() => {
@@ -785,7 +790,7 @@ const FileExplorer = () => {
 
       setError(null);
       setSuccess(`Activating stream worker for ${fileName}...`);
-      await waitForStreamServiceWorkerControl();
+      await prepareForStreaming(telegramClient);
       setSuccess(`Opening stream for ${fileName}...`);
 
       const resolved = await resolveTelegramFile(
@@ -1729,6 +1734,7 @@ const FileExplorer = () => {
         open={streamPlayer.open}
         title={streamPlayer.title}
         streamUrl={streamPlayer.url}
+        preparePlayback={preparePlayback}
         onClose={() => setStreamPlayer({ open: false, url: '', title: '' })}
       />
     </div>

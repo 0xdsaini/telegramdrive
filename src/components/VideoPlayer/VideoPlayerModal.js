@@ -60,12 +60,18 @@ function getBufferSegments(video) {
   return segments;
 }
 
-const VideoPlayerModal = ({ open, title, streamUrl, onClose }) => {
+const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) => {
   const stageRef = useRef(null);
   const videoRef = useRef(null);
   const hideControlsTimer = useRef(null);
   const scrubbingRef = useRef(false);
   const progressRef = useRef(null);
+  const playbackRetryRef = useRef(false);
+  const preparePlaybackRef = useRef(preparePlayback);
+
+  useEffect(() => {
+    preparePlaybackRef.current = preparePlayback;
+  }, [preparePlayback]);
 
   const [lastVideoError, setLastVideoError] = useState('');
   const [isPlaying, setIsPlaying] = useState(false);
@@ -238,6 +244,8 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose }) => {
 
     const video = videoRef.current;
     let previousSrc = '';
+    let cancelled = false;
+    playbackRetryRef.current = false;
 
     const syncUi = () => {
       setCurrentTime(video.currentTime);
@@ -271,6 +279,31 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose }) => {
           const msg = `MediaError code=${video.error.code} ${video.error.message || ''}`;
           setLastVideoError(msg);
           streamDebugError('video', 'element error', new Error(msg));
+          const retryable =
+            isStreamUrl(streamUrl)
+            && (video.error.code === 2 || video.error.code === 3 || video.error.code === 4);
+          if (retryable && !playbackRetryRef.current && preparePlaybackRef.current) {
+            playbackRetryRef.current = true;
+            streamDebug('video', 'retry playback after media error', { code: video.error.code });
+            (async () => {
+              try {
+                await preparePlaybackRef.current();
+                if (cancelled) return;
+                if (previousSrc && isStreamUrl(previousSrc)) {
+                  toggleStreamInUse(previousSrc, false);
+                }
+                setLastVideoError('');
+                video.src = '';
+                video.load();
+                setSrc(streamUrl);
+              } catch (retryError) {
+                streamDebugError('video', 'playback retry failed', retryError);
+                setLastVideoError(
+                  retryError?.message || 'Playback failed after idle. Hard-refresh the tab and try again.'
+                );
+              }
+            })();
+          }
         }
         if (name === 'playing') setIsWaiting(false);
         if (name === 'waiting') setIsWaiting(true);
@@ -304,10 +337,22 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose }) => {
       video.play().catch(() => {});
     };
 
-    setSrc(streamUrl);
-    bumpControlsVisible();
+    (async () => {
+      try {
+        if (preparePlaybackRef.current) {
+          await preparePlaybackRef.current();
+        }
+        if (cancelled) return;
+        setSrc(streamUrl);
+        bumpControlsVisible();
+      } catch (prepareError) {
+        streamDebugError('video', 'preparePlayback failed', prepareError);
+        setLastVideoError(prepareError?.message || 'Could not start streaming playback.');
+      }
+    })();
 
     return () => {
+      cancelled = true;
       handlers.forEach(([name, fn]) => video.removeEventListener(name, fn));
       video.removeEventListener('timeupdate', onTimeUpdate);
       video.pause();
@@ -318,7 +363,7 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose }) => {
       video.load();
       if (hideControlsTimer.current) clearTimeout(hideControlsTimer.current);
     };
-  }, [open, streamUrl, bumpControlsVisible]);
+  }, [open, streamUrl, bumpControlsVisible, preparePlayback]);
 
   const handleProgressPointer = (clientX, rect) => {
     if (!Number.isFinite(duration) || duration <= 0) return;

@@ -5,7 +5,7 @@ import FileExplorerHeader from './components/FileExplorer/FileExplorerHeader';
 import Auth from './components/Auth/Auth';
 import TelegramMessenger from './components/TelegramMessenger/TelegramMessenger';
 import { TelegramProvider, useTelegram } from './context/TelegramContext';
-import { registerStreamBridge, setStreamBridgeClient } from './utils/streamBridge';
+import { registerStreamBridge, setStreamBridgeClient, refreshStreamBridgeAfterIdle } from './utils/streamBridge';
 import { installStreamDebugHelpers } from './utils/streamDebug';
 
 // Component to handle app-level effects
@@ -39,6 +39,22 @@ const AppContent = () => {
 
   useEffect(() => {
     setStreamBridgeClient(telegramClient);
+  }, [telegramClient]);
+
+  useEffect(() => {
+    const onWake = () => {
+      if (document.visibilityState === 'visible') {
+        refreshStreamBridgeAfterIdle(telegramClient);
+      }
+    };
+    document.addEventListener('visibilitychange', onWake);
+    window.addEventListener('focus', onWake);
+    window.addEventListener('pageshow', onWake);
+    return () => {
+      document.removeEventListener('visibilitychange', onWake);
+      window.removeEventListener('focus', onWake);
+      window.removeEventListener('pageshow', onWake);
+    };
   }, [telegramClient]);
   
   // Determine what to render based on authentication state

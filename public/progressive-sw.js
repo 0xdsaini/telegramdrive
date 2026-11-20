@@ -4,7 +4,7 @@
  * File bytes are fetched from the page via TDLib (downloadFile + readFilePart).
  * STREAM_SW_REV=6 — TDLib: sequential 1 MiB parts (no single 2 MiB downloadFile).
  */
-const STREAM_SW_REV = 6;
+const STREAM_SW_REV = 7;
 
 const STREAM_CHUNK_MIDDLE_LIMIT = 512 * 1024;
 const STREAM_CHUNK_UPPER_LIMIT = 1024 * 1024;
@@ -92,10 +92,23 @@ async function openCache() {
   }
 }
 
-async function requestFilePartFromPage(info, alignedOffset, limit, fromPreload = false) {
+function pickPageClient(clients, preferredClientId) {
+  if (!clients?.length) return null;
+  if (preferredClientId) {
+    const match = clients.find((c) => c.id === preferredClientId);
+    if (match) return match;
+  }
+  return clients.find((c) => c.focused) ?? clients[clients.length - 1];
+}
+
+async function requestFilePartFromPage(info, alignedOffset, limit, fromPreload = false, preferredClientId) {
   const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-  swDebug('page-part', 'clients', { count: clients.length, ids: clients.map((c) => c.id) });
-  const client = clients[0];
+  swDebug('page-part', 'clients', {
+    count: clients.length,
+    ids: clients.map((c) => c.id),
+    preferredClientId,
+  });
+  const client = pickPageClient(clients, preferredClientId);
   if (!client) {
     swDebug('page-part', 'FAIL no window client', { alignedOffset, limit });
     throw new Error('No active window client for streaming');
@@ -157,8 +170,9 @@ async function requestFilePartFromPage(info, alignedOffset, limit, fromPreload =
 }
 
 class Stream {
-  constructor(info) {
+  constructor(info, preferredClientId) {
     this.info = info;
+    this.preferredClientId = preferredClientId || null;
     this.id = getStreamId(info);
     this.limitPart =
       info.size > 75 * 1024 * 1024 ? STREAM_CHUNK_UPPER_LIMIT : STREAM_CHUNK_MIDDLE_LIMIT;
@@ -253,7 +267,13 @@ class Stream {
     this.loadedOffsets.add(alignedOffset);
 
     const payloadLimit = limit;
-    const bytesPromise = requestFilePartFromPage(this.info, alignedOffset, payloadLimit, fromPreload);
+    const bytesPromise = requestFilePartFromPage(
+      this.info,
+      alignedOffset,
+      payloadLimit,
+      fromPreload,
+      this.preferredClientId
+    );
     this.saveChunkToCache(bytesPromise, alignedOffset, limit);
 
     if (!fromPreload && this.preloadSize() > 0) {
@@ -374,9 +394,16 @@ class Stream {
     });
   }
 
-  static get(info) {
+  static get(info, preferredClientId) {
     const id = getStreamId(info);
-    return streams.get(id) ?? new Stream(info);
+    const existing = streams.get(id);
+    if (existing) {
+      if (preferredClientId) {
+        existing.preferredClientId = preferredClientId;
+      }
+      return existing;
+    }
+    return new Stream(info, preferredClientId);
   }
 
   static getExisting(info) {
@@ -403,7 +430,7 @@ function onStreamFetch(event, params) {
           mode: event.request.mode,
         });
         const info = parseInfo(params);
-        const stream = Stream.get(info);
+        const stream = Stream.get(info, event.clientId);
         return await stream.requestRange(range);
       } catch (err) {
         swDebug('fetch', 'stream intercept ERROR', String(err));
