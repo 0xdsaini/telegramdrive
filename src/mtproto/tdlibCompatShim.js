@@ -8,6 +8,28 @@ import {
   refreshDocumentFileReference,
 } from './refreshDocumentReference';
 
+/** GramJS CustomFile must hold a Buffer; TDLib shim passes browser File/Blob in inputFileBlob. */
+async function inputBlobToCustomFile(data, name) {
+  const fileName = name || 'file';
+  let buffer;
+  if (data instanceof Blob) {
+    buffer = Buffer.from(await data.arrayBuffer());
+  } else if (typeof data === 'string') {
+    buffer = Buffer.from(data, 'utf8');
+  } else if (Buffer.isBuffer(data)) {
+    buffer = data;
+  } else if (data instanceof ArrayBuffer) {
+    buffer = Buffer.from(data);
+  } else if (ArrayBuffer.isView(data)) {
+    buffer = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+  } else if (data != null) {
+    buffer = Buffer.from(await new Blob([data]).arrayBuffer());
+  } else {
+    throw new Error('inputFileBlob: missing document data');
+  }
+  return new CustomFile(fileName, buffer.length, undefined, buffer);
+}
+
 function dialogChatId(dialog) {
   // GramJS `dialog.id` is the marked peer id (e.g. -100…); entity.id alone breaks supergroups.
   const marked = dialog?.id;
@@ -192,10 +214,15 @@ export function createTdlibCompatShim(gram, { apiId, apiHash, saveSession, onAut
           const input = req.input_message_content;
           const raw = input?.document?.data;
           if (input?.['@type'] === 'inputMessageDocument' && raw) {
-            const blob = raw instanceof Blob ? raw : new Blob([raw]);
-            const fileName = input.document.name || 'file';
-            const file = new CustomFile(fileName, blob.size, undefined, blob);
-            const sent = await gram.sendFile(req.chat_id, { file, caption: '' });
+            const file = await inputBlobToCustomFile(
+              raw,
+              input.document.name || 'file',
+            );
+            const sent = await gram.sendFile(req.chat_id, {
+              file,
+              caption: '',
+              forceDocument: true,
+            });
             return { '@type': 'message', id: sent.id };
           }
           throw new Error('Unsupported sendMessage payload');
@@ -216,12 +243,14 @@ export function createTdlibCompatShim(gram, { apiId, apiHash, saveSession, onAut
         case 'editMessageMedia': {
           const input = req.input_message_content;
           if (input?.document?.data) {
-            const blob = input.document.data;
-            const fileName = input.document.name || 'metadata.json';
-            const file = new CustomFile(fileName, blob.size, undefined, blob);
+            const file = await inputBlobToCustomFile(
+              input.document.data,
+              input.document.name || 'metadata.json',
+            );
             await gram.editMessage(req.chat_id, {
               message: req.message_id,
               file,
+              forceDocument: true,
             });
             return { '@type': 'ok' };
           }
