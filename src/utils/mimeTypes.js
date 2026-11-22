@@ -23,3 +23,22 @@ export function isStreamableMediaFileName(fileName) {
   const mime = mimeTypeFromFileName(fileName);
   return /^(?:video|audio)\//.test(mime);
 }
+
+export function isVideoFileName(fileName) {
+  const mime = mimeTypeFromFileName(fileName);
+  return mime.startsWith('video/');
+}
+
+export function formatVideoDuration(totalSeconds) {
+  if (totalSeconds == null || !Number.isFinite(totalSeconds) || totalSeconds < 0) {
+    return '';
+  }
+  const sec = Math.floor(totalSeconds);
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (h > 0) {
+    return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }
+  return `${m}:${String(s).padStart(2, '0')}`;
+}

@@ -1,57 +1,105 @@
 import { streamDebug, streamDebugError } from './streamDebug';
-import { messageMatchesFileName } from '../mtproto/messageContentShape';
+import {
+  deriveVideoFileNameFromMessage,
+  messageMatchesRequestedFile,
+} from './untrackedChatMedia';
 
-/**
- * Resolve a stored metadata file entry to MTProto synthetic file id + size.
- */
-export async function resolveTelegramFile(telegramClient, chatId, fileName, messageId) {
-  streamDebug('resolve', 'start', { chatId, fileName, messageId });
-  let message = null;
+function isTdlibError(value) {
+  return value?.['@type'] === 'error';
+}
 
+async function fetchMessage(telegramClient, chatId, messageId) {
   try {
-    message = await telegramClient.send({
+    const message = await telegramClient.send({
       '@type': 'getMessage',
       chat_id: chatId,
       message_id: messageId,
     });
-    if (message && !messageMatchesFileName(message, fileName)) {
-      streamDebug('resolve', 'getMessage id mismatch — will search by filename', {
+    if (isTdlibError(message) || !message?.content) {
+      return null;
+    }
+    return message;
+  } catch {
+    return null;
+  }
+}
+
+async function searchMessageByFileName(telegramClient, chatId, fileName, messageId) {
+  const searchResult = await telegramClient.send({
+    '@type': 'searchChatMessages',
+    chat_id: chatId,
+    query: fileName,
+    limit: 50,
+    from_message_id: 0,
+    offset: 0,
+    only_missed: false,
+  });
+
+  const candidates = searchResult?.messages ?? [];
+  if (!candidates.length) {
+    return null;
+  }
+
+  if (messageId != null) {
+    const byId = candidates.find(
+      (msg) => msg.id === messageId && messageMatchesRequestedFile(msg, fileName),
+    );
+    if (byId) {
+      streamDebug('resolve', 'search hit by message_id + filename', {
         messageId,
-        gotMessageId: message.id,
         fileName,
       });
-      message = null;
+      return byId;
     }
-  } catch {
+  }
+
+  for (const msg of candidates) {
+    if (messageMatchesRequestedFile(msg, fileName)) {
+      streamDebug('resolve', 'search hit by exact filename', {
+        messageId: msg.id,
+        fileName,
+      });
+      return msg;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Resolve a stored metadata file entry to TDLib file id + size.
+ */
+export async function resolveTelegramFile(telegramClient, chatId, fileName, messageId) {
+  streamDebug('resolve', 'start', { chatId, fileName, messageId });
+
+  let message = await fetchMessage(telegramClient, chatId, messageId);
+
+  if (message && !messageMatchesRequestedFile(message, fileName)) {
+    streamDebug('resolve', 'metadata message_id points at different file', {
+      messageId,
+      requestedFileName: fileName,
+      telegramFileName: message.content?.document?.file_name
+        ?? message.content?.video?.file_name
+        ?? deriveVideoFileNameFromMessage(message),
+      resolvedMessageId: message.id,
+    });
     message = null;
   }
 
-  if (!message?.content) {
-    const searchResult = await telegramClient.send({
-      '@type': 'searchChatMessages',
-      chat_id: chatId,
-      query: fileName,
-      limit: 50,
-      from_message_id: 0,
-      offset: 0,
-      only_missed: false,
-    });
-
-    if (searchResult?.messages?.length) {
-      const exact = searchResult.messages.find((msg) => messageMatchesFileName(msg, fileName));
-      if (exact) {
-        streamDebug('resolve', 'search hit by exact filename', {
-          fileName,
-          messageId: exact.id,
-          metadataMessageId: messageId,
-        });
-        message = exact;
-      }
-    }
+  if (!message) {
+    message = await searchMessageByFileName(telegramClient, chatId, fileName, messageId);
   }
 
   if (!message?.content) {
-    throw new Error('Message not found or has no content.');
+    throw new Error(
+      `Could not find Telegram message for "${fileName}" (metadata message_id=${messageId}).`,
+    );
+  }
+
+  if (!messageMatchesRequestedFile(message, fileName)) {
+    throw new Error(
+      `Resolved message #${message.id} is not "${fileName}". Check metadata message_id.`,
+    );
   }
 
   const content = message.content;
@@ -100,14 +148,13 @@ export async function resolveTelegramFile(telegramClient, chatId, fileName, mess
     fileId,
     size,
     messageId: resolvedMessageId,
-    metadataMessageId: messageId,
     message,
   };
   streamDebug('resolve', 'done', {
     fileId: out.fileId,
     size: out.size,
     messageId: out.messageId,
-    metadataMessageId: out.metadataMessageId,
+    fileName,
   });
   return out;
 }

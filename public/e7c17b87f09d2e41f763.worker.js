@@ -103,7 +103,7 @@
 /******/ 	__webpack_require__.o = function(object, property) { return Object.prototype.hasOwnProperty.call(object, property); };
 /******/
 /******/ 	// __webpack_public_path__
-/******/ 	__webpack_require__.p = "";
+/******/ 	__webpack_require__.p = (function(){try{var h=self.location.href;return h.substring(0,h.lastIndexOf("/")+1)}catch(e){}return""})();
 /******/
 /******/
 /******/ 	// Load entry module and return exports

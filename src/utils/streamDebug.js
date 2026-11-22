@@ -1,3 +1,6 @@
+import { isAppDebugEnabled } from './appDebug';
+import { appendPersistedLog, recordDebugEvent } from './reloadDebug';
+
 const TAG = '[STREAM_DEBUG]';
 const MAX_LINES = 2000;
 
@@ -14,17 +17,20 @@ function push(line) {
 }
 
 export function streamDebug(stage, message, data) {
+  if (!isAppDebugEnabled()) {
+    return;
+  }
   const parts = [`${TAG} [${stage}]`, message];
   if (data !== undefined) {
     parts.push(data);
   }
   console.log(...parts);
+  const line = `[${stage}] ${message}${
+    data !== undefined ? ` | ${typeof data === 'string' ? data : JSON.stringify(data, replacer, 0)}` : ''
+  }`;
   try {
-    push(
-      `[${stage}] ${message}${
-        data !== undefined ? ` | ${typeof data === 'string' ? data : JSON.stringify(data, replacer, 0)}` : ''
-      }`
-    );
+    push(line);
+    appendPersistedLog(line);
   } catch {
     push(`[${stage}] ${message} | (data not serializable)`);
   }
@@ -44,9 +50,14 @@ function replacer(_key, value) {
 }
 
 export function streamDebugError(stage, message, error) {
+  if (!isAppDebugEnabled()) {
+    return;
+  }
   const detail = error?.stack || error?.message || String(error);
   console.error(`${TAG} [${stage}]`, message, error);
-  push(`[${stage}] ERROR: ${message} | ${detail}`);
+  const line = `[${stage}] ERROR: ${message} | ${detail}`;
+  push(line);
+  appendPersistedLog(line);
 }
 
 function getStreamDebugLogText() {
@@ -71,12 +82,17 @@ function copyTextLegacy(text) {
   }
 }
 
-/**
- * Call from console: copyStreamDebugLogs()
- * Always logs to console; copies when possible. Returns the log text.
- */
+/** Call from console: copyStreamDebugLogs() or copyReloadDebugReport() */
 export function installStreamDebugHelpers() {
   if (typeof window === 'undefined') return;
+  window.copyReloadDebugReport = async () => {
+    const { buildDebugReport, copyDebugReport } = await import('./reloadDebug');
+    const result = await copyDebugReport();
+    if (!result.ok) {
+      console.log(await buildDebugReport());
+    }
+    return result;
+  };
   window.copyStreamDebugLogs = async () => {
     const text = getStreamDebugLogText();
     const lineCount = (window.__STREAM_DEBUG_LOGS || []).length;
@@ -107,12 +123,13 @@ export function installStreamDebugHelpers() {
   window.resetStreamServiceWorker = async () => {
     const regs = await navigator.serviceWorker?.getRegistrations?.();
     await Promise.all((regs || []).map((r) => r.unregister()));
-    sessionStorage.removeItem('stream-sw-reload-attempted');
+    sessionStorage.removeItem('stream-sw-reload-attempted'); // STREAM_SW_RELOAD_KEY in streamBridge
+    recordDebugEvent('reload_scheduled', { source: 'resetStreamServiceWorker' });
     window.location.reload();
   };
   window.getStreamDebugLogText = getStreamDebugLogText;
   streamDebug(
     'init',
-    'Helpers: copyStreamDebugLogs(), getStreamDebugLogText(), dumpStreamDebugLogs(), resetStreamServiceWorker()'
+    'Helpers: copyReloadDebugReport(), copyStreamDebugLogs(), getStreamDebugLogText(), dumpStreamDebugLogs(), resetStreamServiceWorker()'
   );
 }

@@ -9,7 +9,7 @@ import {
   FaCompress,
   FaCog,
 } from 'react-icons/fa';
-import { toggleStreamInUse, isStreamingReadyForPlayback } from '../../utils/streamBridge';
+import { toggleStreamInUse } from '../../utils/streamBridge';
 import { isStreamUrl } from '../../utils/streamUrl';
 import { streamDebug, streamDebugError } from '../../utils/streamDebug';
 import './VideoPlayerModal.css';
@@ -39,6 +39,16 @@ const VIDEO_EVENTS = [
 const PLAYBACK_RATES = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 const CONTROLS_HIDE_MS = 2800;
 const SEEK_STEP = 10;
+const DOUBLE_TAP_MS = 260;
+const SEEK_RIPPLE_MS = 520;
+const CENTER_FLASH_MS = 480;
+const SEEK_STACK_MS = 650;
+const TOUCH_CLICK_GUARD_MS = 900;
+const TRANSPORT_LOCK_MS = 450;
+
+const IS_COARSE_POINTER =
+  typeof window !== 'undefined'
+  && window.matchMedia?.('(hover: none) and (pointer: coarse)')?.matches;
 
 function formatTime(seconds) {
   if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
@@ -68,6 +78,12 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
   const progressRef = useRef(null);
   const playbackRetryRef = useRef(false);
   const preparePlaybackRef = useRef(preparePlayback);
+  const tapGestureRef = useRef({ pending: null, lastAt: 0, lastSide: null });
+  const lastTouchAtRef = useRef(0);
+  const touchSessionRef = useRef({ controlsVisible: true, width: 0 });
+  const centerFlashTimerRef = useRef(null);
+  const seekStackRef = useRef({ side: null, burst: 0, steps: 0 });
+  const transportLockRef = useRef(0);
 
   useEffect(() => {
     preparePlaybackRef.current = preparePlayback;
@@ -85,7 +101,11 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [isWaiting, setIsWaiting] = useState(false);
+  const [isPreparing, setIsPreparing] = useState(false);
   const [scrubPreview, setScrubPreview] = useState(null);
+  const [immersiveMode, setImmersiveMode] = useState(false);
+  const [seekRipple, setSeekRipple] = useState(null);
+  const [centerFlash, setCenterFlash] = useState(null);
 
   const bumpControlsVisible = useCallback(() => {
     setShowControls(true);
@@ -114,7 +134,16 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
       const video = videoRef.current;
       if (!video || !Number.isFinite(video.duration)) return;
       const next = Math.min(Math.max(0, video.currentTime + delta), video.duration);
-      video.currentTime = next;
+      if (typeof video.fastSeek === 'function') {
+        try {
+          video.fastSeek(next);
+        } catch {
+          video.currentTime = next;
+        }
+      } else {
+        video.currentTime = next;
+      }
+      setCurrentTime(next);
       bumpControlsVisible();
     },
     [bumpControlsVisible]
@@ -154,20 +183,220 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
     [bumpControlsVisible]
   );
 
+  const triggerSeekRipple = useCallback((side, steps = 1) => {
+    const burst = Date.now();
+    setSeekRipple({ side, burst, steps });
+    window.setTimeout(() => {
+      setSeekRipple((prev) => (prev?.burst === burst ? null : prev));
+    }, SEEK_RIPPLE_MS);
+  }, []);
+
+  const flashCenterTransport = useCallback((mode) => {
+    const id = Date.now();
+    setCenterFlash({ mode, id });
+    if (centerFlashTimerRef.current) clearTimeout(centerFlashTimerRef.current);
+    centerFlashTimerRef.current = window.setTimeout(() => {
+      setCenterFlash((prev) => (prev?.id === id ? null : prev));
+    }, CENTER_FLASH_MS);
+  }, []);
+
+  const toggleVideoTransport = useCallback(
+    (flashOnPause = false) => {
+      if (Date.now() - transportLockRef.current < TRANSPORT_LOCK_MS) return null;
+      transportLockRef.current = Date.now();
+
+      const video = videoRef.current;
+      if (!video) return null;
+      const wasPlaying = !video.paused;
+      if (wasPlaying) {
+        video.pause();
+        setIsPlaying(false);
+        if (flashOnPause) flashCenterTransport('pause');
+      } else {
+        video.play().catch(() => {});
+        setIsPlaying(true);
+      }
+      bumpControlsVisible();
+      return wasPlaying ? 'pause' : 'play';
+    },
+    [bumpControlsVisible, flashCenterTransport]
+  );
+
+  const enterDefaultFullscreen = useCallback(async () => {
+    const stage = stageRef.current;
+    if (!stage || document.fullscreenElement) return;
+
+    const req =
+      stage.requestFullscreen?.bind(stage)
+      || stage.webkitRequestFullscreen?.bind(stage);
+
+    if (req) {
+      try {
+        await req();
+        return;
+      } catch {
+        /* fall through */
+      }
+    }
+    setImmersiveMode(true);
+  }, []);
+
+  const handleVideoAreaSeek = useCallback(
+    (side) => {
+      const now = Date.now();
+      const delta = side === 'left' ? -SEEK_STEP : SEEK_STEP;
+      let steps = 1;
+      if (
+        seekStackRef.current.side === side
+        && now - seekStackRef.current.burst < SEEK_STACK_MS
+      ) {
+        steps = seekStackRef.current.steps + 1;
+      }
+      seekStackRef.current = { side, burst: now, steps };
+      seekBy(delta);
+      triggerSeekRipple(side, steps);
+    },
+    [seekBy, triggerSeekRipple]
+  );
+
+  const clearTapGesture = useCallback(() => {
+    if (tapGestureRef.current.pending) {
+      clearTimeout(tapGestureRef.current.pending);
+      tapGestureRef.current.pending = null;
+    }
+    tapGestureRef.current.lastAt = 0;
+    tapGestureRef.current.lastSide = null;
+  }, []);
+
+  const handleVideoAreaClick = useCallback(
+    (e) => {
+      if (IS_COARSE_POINTER) return;
+      if (Date.now() - lastTouchAtRef.current < TOUCH_CLICK_GUARD_MS) return;
+      if (e.pointerType && e.pointerType !== 'mouse') return;
+      togglePlay();
+    },
+    [togglePlay]
+  );
+
+  const videoTapZone = useCallback((x, width) => {
+    if (x < width * 0.38) return 'left';
+    if (x > width * 0.62) return 'right';
+    return 'center';
+  }, []);
+
+  const handleVideoTouchStart = useCallback(
+    (e) => {
+      if (e.touches.length !== 1) return;
+      const rect = e.currentTarget.getBoundingClientRect();
+      touchSessionRef.current = {
+        controlsVisible: showControls,
+        width: rect.width,
+        startedPaused: !!videoRef.current?.paused,
+      };
+      bumpControlsVisible();
+    },
+    [bumpControlsVisible, showControls]
+  );
+
+  const handleVideoTouchEnd = useCallback(
+    (e) => {
+      if (e.changedTouches.length !== 1) return;
+      lastTouchAtRef.current = Date.now();
+      const touch = e.changedTouches[0];
+      const rect = e.currentTarget.getBoundingClientRect();
+      const x = touch.clientX - rect.left;
+      const width = rect.width || touchSessionRef.current.width || 1;
+      const zone = videoTapZone(x, width);
+      const now = Date.now();
+
+      if (
+        zone !== 'center'
+        && now - tapGestureRef.current.lastAt < DOUBLE_TAP_MS
+        && tapGestureRef.current.lastSide === zone
+      ) {
+        clearTapGesture();
+        e.preventDefault();
+        handleVideoAreaSeek(zone);
+        return;
+      }
+
+      const { controlsVisible, startedPaused } = touchSessionRef.current;
+
+      if (zone === 'center' && controlsVisible && !startedPaused) {
+        clearTapGesture();
+        e.preventDefault();
+        toggleVideoTransport(true);
+        tapGestureRef.current.lastAt = now;
+        tapGestureRef.current.lastSide = zone;
+        return;
+      }
+
+      if (zone === 'center') {
+        e.preventDefault();
+      }
+
+      tapGestureRef.current.lastAt = now;
+      tapGestureRef.current.lastSide = zone;
+
+      if (tapGestureRef.current.pending) clearTimeout(tapGestureRef.current.pending);
+      tapGestureRef.current.pending = window.setTimeout(() => {
+        tapGestureRef.current.pending = null;
+        tapGestureRef.current.lastAt = 0;
+        tapGestureRef.current.lastSide = null;
+        bumpControlsVisible();
+      }, DOUBLE_TAP_MS);
+    },
+    [bumpControlsVisible, clearTapGesture, handleVideoAreaSeek, toggleVideoTransport, videoTapZone]
+  );
+
+  const swallowVideoDoubleClick = useCallback(
+    (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      clearTapGesture();
+    },
+    [clearTapGesture]
+  );
+
   const toggleFullscreen = useCallback(async () => {
     const stage = stageRef.current;
     if (!stage) return;
-    try {
-      if (!document.fullscreenElement) {
-        await stage.requestFullscreen();
-      } else {
+
+    const inNativeFs = !!document.fullscreenElement;
+    if (inNativeFs) {
+      try {
         await document.exitFullscreen();
+      } catch {
+        /* ignore */
       }
-    } catch {
-      /* ignore */
+      bumpControlsVisible();
+      return;
     }
+
+    if (immersiveMode) {
+      setImmersiveMode(false);
+      bumpControlsVisible();
+      return;
+    }
+
+    const req =
+      stage.requestFullscreen?.bind(stage)
+      || stage.webkitRequestFullscreen?.bind(stage)
+      || stage.webkitEnterFullscreen?.bind(stage);
+
+    if (req) {
+      try {
+        await req();
+        bumpControlsVisible();
+        return;
+      } catch {
+        /* fall through to immersive */
+      }
+    }
+
+    setImmersiveMode(true);
     bumpControlsVisible();
-  }, [bumpControlsVisible]);
+  }, [bumpControlsVisible, immersiveMode]);
 
   const setRate = useCallback(
     (rate) => {
@@ -182,10 +411,45 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
   );
 
   useEffect(() => {
-    const onFs = () => setIsFullscreen(!!document.fullscreenElement);
+    const onFs = () => setIsFullscreen(!!document.fullscreenElement || immersiveMode);
     document.addEventListener('fullscreenchange', onFs);
-    return () => document.removeEventListener('fullscreenchange', onFs);
-  }, []);
+    document.addEventListener('webkitfullscreenchange', onFs);
+    onFs();
+    return () => {
+      document.removeEventListener('fullscreenchange', onFs);
+      document.removeEventListener('webkitfullscreenchange', onFs);
+    };
+  }, [immersiveMode]);
+
+  useEffect(() => {
+    if (!open) {
+      setImmersiveMode(false);
+      clearTapGesture();
+      setSeekRipple(null);
+      setCenterFlash(null);
+      document.body.classList.remove('yt-player-open');
+      return undefined;
+    }
+    document.body.classList.add('yt-player-open');
+    return () => document.body.classList.remove('yt-player-open');
+  }, [open, clearTapGesture]);
+
+  useEffect(() => {
+    if (!open || !IS_COARSE_POINTER) return undefined;
+    const timer = window.setTimeout(() => {
+      enterDefaultFullscreen();
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [open, enterDefaultFullscreen]);
+
+  useEffect(() => {
+    if (!immersiveMode) return undefined;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [immersiveMode]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -229,7 +493,11 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
           changeVolume(Math.max(0, (videoRef.current?.volume ?? volume) - 0.05));
           break;
         case 'Escape':
-          if (!document.fullscreenElement) onClose();
+          if (immersiveMode) {
+            setImmersiveMode(false);
+          } else if (!document.fullscreenElement) {
+            onClose();
+          }
           break;
         default:
           break;
@@ -237,7 +505,7 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, togglePlay, toggleFullscreen, toggleMute, seekBy, changeVolume, volume, onClose]);
+  }, [open, immersiveMode, togglePlay, toggleFullscreen, toggleMute, seekBy, changeVolume, volume, onClose]);
 
   useEffect(() => {
     if (!open || !streamUrl || !videoRef.current) return undefined;
@@ -287,7 +555,7 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
             streamDebug('video', 'retry playback after media error', { code: video.error.code });
             (async () => {
               try {
-                await preparePlaybackRef.current();
+                await preparePlaybackRef.current({ force: true });
                 if (cancelled) return;
                 if (previousSrc && isStreamUrl(previousSrc)) {
                   toggleStreamInUse(previousSrc, false);
@@ -299,7 +567,8 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
               } catch (retryError) {
                 streamDebugError('video', 'playback retry failed', retryError);
                 setLastVideoError(
-                  retryError?.message || 'Playback failed after idle. Hard-refresh the tab and try again.'
+                  retryError?.message
+                    || 'Playback failed after idle. Switch back to this tab and try Play again, or open the app in a new tab.'
                 );
               }
             })();
@@ -339,28 +608,36 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
 
     (async () => {
       try {
-        const canPlayImmediately = isStreamingReadyForPlayback() && isStreamUrl(streamUrl);
-        if (canPlayImmediately) {
-          streamDebug('video', 'fast path: SW ready — setSrc before prepare');
+        setIsPreparing(true);
+        const preparePromise = preparePlaybackRef.current
+          ? preparePlaybackRef.current()
+          : Promise.resolve();
+        const canStartImmediately =
+          isStreamUrl(streamUrl) && !!navigator.serviceWorker?.controller;
+
+        if (canStartImmediately && !cancelled) {
           setSrc(streamUrl);
           bumpControlsVisible();
         }
-        if (preparePlaybackRef.current) {
-          await preparePlaybackRef.current();
-        }
+
+        await preparePromise;
         if (cancelled) return;
-        if (!canPlayImmediately) {
+
+        if (!canStartImmediately) {
           setSrc(streamUrl);
           bumpControlsVisible();
         }
       } catch (prepareError) {
         streamDebugError('video', 'preparePlayback failed', prepareError);
         setLastVideoError(prepareError?.message || 'Could not start streaming playback.');
+      } finally {
+        if (!cancelled) setIsPreparing(false);
       }
     })();
 
     return () => {
       cancelled = true;
+      setIsPreparing(false);
       handlers.forEach(([name, fn]) => video.removeEventListener(name, fn));
       video.removeEventListener('timeupdate', onTimeUpdate);
       video.pause();
@@ -423,15 +700,57 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
       <div
         ref={stageRef}
         className={`yt-player-stage${isFullscreen ? ' yt-player-stage--fullscreen' : ''}${
-          showControls ? ' yt-player-stage--controls-visible' : ''
-        }`}
+          immersiveMode ? ' yt-player-stage--immersive' : ''
+        }${showControls ? ' yt-player-stage--controls-visible' : ''}`}
         onClick={(e) => e.stopPropagation()}
         onMouseMove={bumpControlsVisible}
         onTouchStart={bumpControlsVisible}
       >
+        <div className="yt-player-topbar" onClick={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            className="yt-player-topbtn yt-player-topbtn--close"
+            onClick={onClose}
+            aria-label="Close player"
+          >
+            <FaTimes />
+          </button>
+          <div className="yt-player-settings-wrap yt-player-settings-wrap--top">
+            <button
+              type="button"
+              className="yt-player-topbtn yt-player-topbtn--settings"
+              onClick={() => setShowSettings((s) => !s)}
+              aria-expanded={showSettings}
+              aria-label="Playback speed"
+            >
+              <FaCog />
+              {playbackRate !== 1 ? (
+                <span className="yt-player-rate-label">{playbackRate}×</span>
+              ) : null}
+            </button>
+            {showSettings ? (
+              <ul className="yt-player-settings-menu yt-player-settings-menu--top" role="menu">
+                {PLAYBACK_RATES.map((rate) => (
+                  <li key={rate} role="none">
+                    <button
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={playbackRate === rate}
+                      className={playbackRate === rate ? 'is-active' : ''}
+                      onClick={() => setRate(rate)}
+                    >
+                      {rate === 1 ? 'Normal' : `${rate}×`}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        </div>
+
         <button
           type="button"
-          className="yt-player-close"
+          className="yt-player-close yt-player-close--desktop"
           onClick={onClose}
           aria-label="Close player"
         >
@@ -440,23 +759,45 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
 
         <div
           className="yt-player-video-wrap"
-          onClick={togglePlay}
-          onDoubleClick={toggleFullscreen}
+          onClick={handleVideoAreaClick}
+          onTouchStart={handleVideoTouchStart}
+          onTouchEnd={handleVideoTouchEnd}
+          onDoubleClick={swallowVideoDoubleClick}
           role="presentation"
         >
           <video ref={videoRef} className="yt-player-video" playsInline />
 
-          {isWaiting && !lastVideoError ? (
+          {(isPreparing || isWaiting) && !lastVideoError ? (
             <div className="yt-player-spinner" aria-hidden />
           ) : null}
 
-          {!isPlaying && !isWaiting && !lastVideoError ? (
+          {isPreparing && !lastVideoError ? (
+            <div className="yt-player-preparing" aria-live="polite">
+              Activating stream worker…
+            </div>
+          ) : null}
+
+          {!isPlaying && !isWaiting && !isPreparing && !lastVideoError ? (
             <button
               type="button"
               className="yt-player-big-play"
-              onClick={(e) => {
+              onTouchStart={(e) => {
                 e.stopPropagation();
-                togglePlay();
+                lastTouchAtRef.current = Date.now();
+              }}
+              onTouchEnd={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                lastTouchAtRef.current = Date.now();
+                clearTapGesture();
+                toggleVideoTransport(false);
+              }}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (IS_COARSE_POINTER) return;
+                clearTapGesture();
+                toggleVideoTransport(false);
               }}
               aria-label="Play"
             >
@@ -464,9 +805,31 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
             </button>
           ) : null}
 
-          <div className="yt-player-gradient yt-player-gradient--top">
-            <h2 className="yt-player-title">{title}</h2>
-          </div>
+          {centerFlash?.mode === 'pause' ? (
+            <div className="yt-player-center-flash yt-player-center-flash--pause" key={centerFlash.id} aria-hidden>
+              <span className="yt-player-pause-bar" />
+              <span className="yt-player-pause-bar" />
+            </div>
+          ) : null}
+
+          {seekRipple ? (
+            <div
+              className={`yt-player-seek-ripple yt-player-seek-ripple--${seekRipple.side}`}
+              key={seekRipple.burst}
+              aria-hidden
+            >
+              <span className="yt-player-seek-ripple-ring" />
+              <span className="yt-player-seek-ripple-arrows" aria-hidden>
+                {Array.from({ length: seekRipple.steps || 1 }, (_, i) => (
+                  <span key={`${seekRipple.burst}-${i}`} className="yt-player-seek-ripple-arrow" />
+                ))}
+              </span>
+              <span className="yt-player-seek-ripple-label">
+                {seekRipple.side === 'left' ? '−' : '+'}
+                {(seekRipple.steps || 1) * SEEK_STEP} seconds
+              </span>
+            </div>
+          ) : null}
 
           {lastVideoError ? (
             <div className="yt-player-error-banner">{lastVideoError}</div>
@@ -481,6 +844,21 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
               scrubbingRef.current = true;
               const rect = e.currentTarget.getBoundingClientRect();
               handleProgressPointer(e.clientX, rect);
+            }}
+            onTouchStart={(e) => {
+              if (e.touches.length !== 1) return;
+              scrubbingRef.current = true;
+              const rect = e.currentTarget.getBoundingClientRect();
+              handleProgressPointer(e.touches[0].clientX, rect);
+            }}
+            onTouchMove={(e) => {
+              if (!scrubbingRef.current || e.touches.length !== 1) return;
+              const rect = e.currentTarget.getBoundingClientRect();
+              handleProgressPointer(e.touches[0].clientX, rect);
+            }}
+            onTouchEnd={() => {
+              scrubbingRef.current = false;
+              setScrubPreview(null);
             }}
             onMouseLeave={() => {
               if (!scrubbingRef.current) setScrubPreview(null);
@@ -520,11 +898,25 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
 
           <div className="yt-player-controls-row">
             <div className="yt-player-controls-left">
-              <button type="button" className="yt-player-btn" onClick={togglePlay} aria-label={isPlaying ? 'Pause' : 'Play'}>
+              <button
+                type="button"
+                className="yt-player-btn yt-player-btn--transport"
+                onClick={(e) => {
+                  if (IS_COARSE_POINTER) {
+                    e.preventDefault();
+                    lastTouchAtRef.current = Date.now();
+                  }
+                  if (!IS_COARSE_POINTER && Date.now() - lastTouchAtRef.current < TOUCH_CLICK_GUARD_MS) {
+                    return;
+                  }
+                  toggleVideoTransport(false);
+                }}
+                aria-label={isPlaying ? 'Pause' : 'Play'}
+              >
                 {isPlaying ? <FaPause /> : <FaPlay />}
               </button>
 
-              <div className="yt-player-volume">
+              <div className="yt-player-volume yt-player-volume--desktop">
                 <button type="button" className="yt-player-btn" onClick={toggleMute} aria-label={isMuted ? 'Unmute' : 'Mute'}>
                   {isMuted || volume === 0 ? <FaVolumeMute /> : <FaVolumeUp />}
                 </button>
@@ -546,7 +938,7 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
             </div>
 
             <div className="yt-player-controls-right">
-              <div className="yt-player-settings-wrap">
+              <div className="yt-player-settings-wrap yt-player-settings-wrap--bottom">
                 <button
                   type="button"
                   className="yt-player-btn"

@@ -6,6 +6,7 @@ const MIN_WAIT_MS = 20_000;
 const MAX_WAIT_MS = 300_000;
 const PRIORITY_PLAYBACK = 32;
 const PRIORITY_PRELOAD = 8;
+export const PRIORITY_POSTER = 6;
 /** tdweb/TDLib fetches in 512 KiB steps — do not pass larger limits to downloadFile. */
 const TDLIB_PART_BYTES = 512 * 1024;
 /** Minimum contiguous bytes before we stream a partial response to the video element. */
@@ -243,7 +244,13 @@ async function ensureRangeDownloaded(
   let prefix = await getDownloadedPrefixSize(client, fileId, offset);
   if (prefix >= count) {
     streamDebug('tdlib', 'range already local', { fileId, offset, count, existing: prefix });
-    return prefix;
+    try {
+      await readFilePartOnce(client, fileId, offset, count);
+      return prefix;
+    } catch (verifyError) {
+      streamDebugError('tdlib', 'stale prefix — re-downloading range', verifyError);
+      prefix = 0;
+    }
   }
 
   while (prefix < count) {

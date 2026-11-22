@@ -1,5 +1,5 @@
 {
-  "homepage": ".",
+  "homepage": "https://0xdsaini.github.io/telegramdrive",
   "name": "trae1",
   "version": "0.1.0",
   "private": true,
@@ -13,6 +13,7 @@
     "react-dom": "^19.0.0",
     "react-icons": "^5.5.0",
     "react-scripts": "5.0.1",
+    "sql.js": "^1.17.0",
     "telegram": "^2.26.22",
     "web-vitals": "^2.1.4"
   },
@@ -22,7 +23,7 @@
     "test": "craco test",
     "eject": "react-scripts eject",
     "predeploy": "npm run build",
-    "deploy": "gh-pages -d build"
+    "deploy": "gh-pages -d build --nojekyll"
   },
   "eslintConfig": {
     "extends": [

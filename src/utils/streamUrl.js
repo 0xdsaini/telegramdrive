@@ -23,3 +23,20 @@ export function getStreamUrl({ fileId, size, mimeType, fileName, messageId, chat
 export function isStreamUrl(url) {
   return typeof url === 'string' && url.includes('/stream/');
 }
+
+export function parseStreamUrlInfo(url) {
+  if (!url || typeof url !== 'string') {
+    return null;
+  }
+  const needle = '/stream/';
+  const index = url.indexOf(needle);
+  if (index === -1) {
+    return null;
+  }
+  try {
+    const params = url.slice(index + needle.length).split('?')[0];
+    return JSON.parse(decodeURIComponent(params));
+  } catch {
+    return null;
+  }
+}

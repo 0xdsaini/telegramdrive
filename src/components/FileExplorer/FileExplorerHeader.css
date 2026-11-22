@@ -74,8 +74,10 @@
   margin-right: 24px;
 }
 
-.app-logo svg {
-  font-size: 22px;
+.app-logo-icon {
+  width: 22px;
+  height: 22px;
+  display: block;
   margin-right: 8px;
 }
 

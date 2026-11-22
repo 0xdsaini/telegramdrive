@@ -11,6 +11,29 @@
   background-color: #f5f7fa;
 }
 
+.app-bootstrap-loading {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 2rem;
+  color: #334155;
+}
+
+.app-bootstrap-loading-title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.app-bootstrap-loading-detail {
+  margin: 0;
+  font-size: 0.95rem;
+  color: #64748b;
+}
+
 /* File explorer container styles */
 .file-explorer-container {
   display: flex;

@@ -1,6 +1,6 @@
 import React, { useContext } from 'react';
 import { TelegramContext } from '../../context/TelegramContext';
-import { FaSignOutAlt, FaFolder, FaCloud } from 'react-icons/fa';
+import { FaSignOutAlt, FaFolder } from 'react-icons/fa';
 import './FileExplorerHeader.css';
 
 const FileExplorerHeader = () => {
@@ -19,7 +19,14 @@ const FileExplorerHeader = () => {
     <div className="file-explorer-header">
       <div className="header-left">
         <div className="app-logo">
-          <FaCloud />
+          <img
+            src={`${process.env.PUBLIC_URL}/app-logo.svg`}
+            alt=""
+            className="app-logo-icon"
+            width={22}
+            height={22}
+            draggable={false}
+          />
         </div>
         <div className="group-indicator">
           <FaFolder className="folder-icon" />

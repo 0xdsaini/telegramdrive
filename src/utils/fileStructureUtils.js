@@ -15,6 +15,48 @@ export const createEmptyFileStructure = () => {
 };
 
 /**
+ * UTC timestamp from metadata JSON (milliseconds since epoch), or null if missing/invalid.
+ * @param {Object} fileStructure
+ * @returns {number|null}
+ */
+export const getMetadataTimestampMs = (fileStructure) => {
+  const updatedAt = fileStructure?.updatedAt;
+  if (!updatedAt || typeof updatedAt !== 'string') {
+    return null;
+  }
+  const parsed = Date.parse(updatedAt);
+  return Number.isNaN(parsed) ? null : parsed;
+};
+
+/**
+ * @param {Object} fileStructure
+ * @param {Date} [date]
+ * @returns {Object}
+ */
+export const stampFileStructureUpdatedAt = (fileStructure, date = new Date()) => {
+  return {
+    ...fileStructure,
+    updatedAt: date.toISOString(),
+  };
+};
+
+/**
+ * Legacy metadata without updatedAt: infer from Telegram message edit/send date (unix seconds).
+ * @param {Object} fileStructure
+ * @param {number} [editDateUnix]
+ * @returns {Object}
+ */
+export const ensureMetadataUpdatedAtFromTelegram = (fileStructure, editDateUnix) => {
+  if (getMetadataTimestampMs(fileStructure) != null) {
+    return fileStructure;
+  }
+  if (!editDateUnix) {
+    return fileStructure;
+  }
+  return stampFileStructureUpdatedAt(fileStructure, new Date(editDateUnix * 1000));
+};
+
+/**
  * Parses a message text to extract the file structure JSON
  * @param {string} messageText - The text content of the message
  * @returns {Object|null} Parsed file structure or null if invalid
@@ -69,6 +111,36 @@ export const serializeFileStructure = (fileStructure) => {
  * @param {string} path - Path to the folder (e.g., "/Home/Documents")
  * @returns {Object|null} The folder object or null if not found
  */
+/**
+ * All Telegram message IDs referenced in metadata, anywhere in the tree.
+ * @param {Object} fileStructure
+ * @returns {Set<number>}
+ */
+export const collectTrackedMessageIds = (fileStructure) => {
+  const ids = new Set();
+
+  const walk = (node) => {
+    if (!node) {
+      return;
+    }
+    for (const file of node.files || []) {
+      const messageId = file?.message_id;
+      if (messageId != null && messageId !== '') {
+        const numericId = Number(messageId);
+        if (!Number.isNaN(numericId)) {
+          ids.add(numericId);
+        }
+      }
+    }
+    for (const subfolder of node.subfolders || []) {
+      walk(subfolder);
+    }
+  };
+
+  walk(fileStructure);
+  return ids;
+};
+
 export const findFolderByPath = (fileStructure, path) => {
   if (path === '/' || path === '') {
     return fileStructure;
@@ -218,7 +290,7 @@ export const moveFolder = (fileStructure, sourcePath, destPath) => {
  * @param {Object} fileStructure - The file structure object
  * @param {string} folderPath - Path to the folder where to add the file
  * @param {string} filename - Name of the file
- * @param {string} messageId - Telegram message ID containing the file
+ * @param {number|string} messageId - Telegram message ID containing the file (unique per chat)
  * @returns {Object} Updated file structure
  */
 export const addFile = (fileStructure, folderPath, filename, messageId) => {
@@ -227,25 +299,28 @@ export const addFile = (fileStructure, folderPath, filename, messageId) => {
     console.error(`Folder not found: ${folderPath}`);
     return fileStructure;
   }
-  
+
+  const numericMessageId = Number(messageId);
+  if (!Number.isFinite(numericMessageId)) {
+    console.error(`Invalid message_id for addFile: ${messageId}`);
+    return fileStructure;
+  }
+
+  // inode === message_id: TDLib message ids are unique within a chat (chat_id + message_id).
+  const entry = {
+    inode: numericMessageId,
+    filename,
+    message_id: numericMessageId,
+  };
+
   // Check if file already exists
   const existingFileIndex = folder.files.findIndex(f => f.filename === filename);
   if (existingFileIndex !== -1) {
-    // Update existing file
-    folder.files[existingFileIndex] = {
-      inode: `file_${Date.now()}`,
-      filename,
-      message_id: messageId
-    };
+    folder.files[existingFileIndex] = entry;
   } else {
-    // Add new file
-    folder.files.push({
-      inode: `file_${Date.now()}`,
-      filename,
-      message_id: messageId
-    });
+    folder.files.push(entry);
   }
-  
+
   return fileStructure;
 };
 

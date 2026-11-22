@@ -1,12 +1,15 @@
 import { Buffer } from 'buffer';
-
-globalThis.Buffer = globalThis.Buffer || Buffer;
-
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import './index.css';
+import { initAppDebug } from './utils/appDebug';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
+
+// GramJS expects Node-style Buffer in the browser bundle.
+window.Buffer = window.Buffer || Buffer;
+
+initAppDebug();
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(

@@ -1,12 +1,37 @@
 import { TELEGRAM_API_ID, TELEGRAM_API_HASH } from './constants';
-import { createGramTelegramClient, clearGramSession } from '../../mtproto/gramTelegramClient';
-import { clearDocumentRegistry } from '../../mtproto/documentRegistry';
-import { createEmptyFileStructure, parseFileStructure, serializeFileStructure } from '../../utils/fileStructureUtils';
+import { createGramTelegramClient } from '../../mtproto/gramTelegramClient';
+import {
+  createEmptyFileStructure,
+  parseFileStructure,
+  serializeFileStructure,
+  getMetadataTimestampMs,
+  stampFileStructureUpdatedAt,
+  ensureMetadataUpdatedAtFromTelegram,
+} from '../../utils/fileStructureUtils';
 
 import React, { useState, useEffect, useRef, useCallback, useContext } from 'react';
 import ChatGroupSelector from '../ChatGroupSelector/ChatGroupSelector';
 import { TelegramContext } from '../../context/TelegramContext';
+import { runChatStorageBootstrap } from '../../utils/chatBootstrap';
+import { debugLog, isAppDebugEnabled } from '../../utils/appDebug';
 import './TelegramMessenger.css';
+
+const METADATA_MARKER = 'METADATA_STORAGE';
+
+function isMetadataStorageMessage(message) {
+  if (!message?.content) {
+    return false;
+  }
+  const textBody = message.content.text?.text;
+  if (textBody?.includes(METADATA_MARKER)) {
+    return true;
+  }
+  const caption = message.content.caption?.text;
+  if (caption?.includes(METADATA_MARKER)) {
+    return true;
+  }
+  return message.content.document?.file_name === 'metadata.json';
+}
 
 const TelegramMessenger = () => {
   // State for message input and status
@@ -28,14 +53,16 @@ const TelegramMessenger = () => {
   const clientRef = useRef(null);
   const getChatsPromiseRef = useRef(null);
   const inputRef = useRef(null);
+  const bootstrapGenerationRef = useRef(0);
   
   // Message ID for editing messages
   const [messageId, setMessageId] = useState(null);
   
   // Access the Telegram context
   const { 
-    setFileStructure, 
+    setFileStructure,
     setIsFileStructureLoaded,
+    setIsThumbsStoreLoaded,
     setTelegramClient,
     setIsConnected: setContextIsConnected,
     setMessageId: setContextMessageId,
@@ -53,39 +80,101 @@ const TelegramMessenger = () => {
     return new File([blob], 'metadata.json', { type: 'application/json' });
   };
 
-  const messageLooksLikeMetadata = (messageResult) => {
-    if (!messageResult?.content) return false;
-    const text = messageResult.content?.text?.text;
-    const caption = messageResult.content?.caption?.text;
-    const fileName = messageResult.content?.document?.file_name;
-    return (
-      (text && text.includes('METADATA_STORAGE'))
-      || (caption && caption.includes('METADATA_STORAGE'))
-      || fileName === 'metadata.json'
-    );
-  };
-
   const downloadFileandExtractMetadata = async (messageId) => {
-    if (!messageId || !clientRef.current || !selectedChatId) {
-      throw new Error('Missing messageId or client for metadata download');
+    const client = clientRef.current || window.tdClient;
+    if (!client || !selectedChatId) {
+      throw new Error('Telegram client or chat is not ready');
     }
 
-    const message = await clientRef.current.send({
-      '@type': 'getMessage',
-      chat_id: selectedChatId,
-      message_id: messageId,
-    });
+    let foundMessage = null;
+    let foundId = null;
 
-    const docFile = message?.content?.document?.document;
+    const numericMessageId =
+      messageId != null && messageId !== ''
+        ? parseInt(String(messageId), 10)
+        : NaN;
+
+    if (Number.isFinite(numericMessageId)) {
+      try {
+        const messageResult = await client.send({
+          '@type': 'getMessage',
+          chat_id: selectedChatId,
+          message_id: numericMessageId,
+        });
+        if (messageResult && isMetadataStorageMessage(messageResult)) {
+          foundMessage = messageResult;
+          foundId = messageResult.id;
+        }
+      } catch (getMessageError) {
+        console.error('getMessage failed for metadata message:', getMessageError);
+      }
+    }
+
+    if (!foundMessage) {
+      try {
+        console.log('Falling back to getChatHistory for METADATA_STORAGE...');
+        let fromMessageId = 0;
+        const maxAttempts = 5;
+
+        for (let attempt = 0; attempt < maxAttempts && !foundMessage; attempt++) {
+          const historyResult = await client.send({
+            '@type': 'getChatHistory',
+            chat_id: selectedChatId,
+            from_message_id: fromMessageId,
+            offset: 0,
+            limit: 50,
+            only_local: false,
+          });
+
+          if (!historyResult.messages?.length) {
+            break;
+          }
+
+          fromMessageId =
+            historyResult.messages[historyResult.messages.length - 1].id;
+          foundMessage = historyResult.messages.find(isMetadataStorageMessage);
+
+          if (foundMessage) {
+            foundId = foundMessage.id;
+            console.log(
+              'Found METADATA_STORAGE message with getChatHistory, ID:',
+              foundId,
+            );
+          }
+
+          if (historyResult.messages.length < 50) {
+            break;
+          }
+        }
+      } catch (historyError) {
+        console.error('Error with getChatHistory:', historyError);
+      }
+    }
+
+    if (!foundMessage) {
+      throw new Error('METADATA_STORAGE message not found in this chat');
+    }
+
+    const editDateUnix =
+      foundMessage.edit_date > 0 ? foundMessage.edit_date : foundMessage.date;
+
+    if (!foundMessage.content?.document) {
+      const textBody = foundMessage.content?.text?.text;
+      if (!textBody) {
+        throw new Error('METADATA_STORAGE message has no document or text body');
+      }
+      return { text: textBody, id: foundId ?? foundMessage.id, editDateUnix };
+    }
+
+    const docFile = foundMessage.content.document.document;
     if (!docFile?.id) {
-      throw new Error('Metadata message has no attached document');
+      throw new Error('Metadata message has no attached document file');
     }
 
     const fileId = docFile.id;
     const size = docFile.size || 0;
-    setMessageId(messageId);
 
-    const part = await clientRef.current.send({
+    const part = await client.send({
       '@type': 'readFilePart',
       file_id: fileId,
       offset: 0,
@@ -96,9 +185,14 @@ const TelegramMessenger = () => {
       ? (typeof part.data === 'string' ? part.data : part.data.toString('utf8'))
       : '';
 
-  console.log('Metadata JSON loaded via MTProto, bytes:', text.length);
+    console.log('Metadata JSON loaded via MTProto, bytes:', text.length);
 
-    return { text, id: messageId };
+    return { text, id: foundId ?? foundMessage.id, editDateUnix };
+  }
+
+  const loadFileStructureFromTelegram = (metadataText, editDateUnix) => {
+    const parsed = parseFileStructure(metadataText);
+    return ensureMetadataUpdatedAtFromTelegram(parsed, editDateUnix);
   };
 
   // Find message with METADATA_STORAGE prefix to enable message editing
@@ -123,18 +217,28 @@ const TelegramMessenger = () => {
             "message_id": parseInt(savedMessageId, 10)
           });
           
-          if (messageResult && messageLooksLikeMetadata(messageResult)) {
+          if (messageResult && isMetadataStorageMessage(messageResult)) {
             console.log("Verified saved message ID is valid:", savedMessageId);
             const numericId = parseInt(savedMessageId, 10);
             setMessageId(numericId);
             setContextMessageId(numericId);
 
             try {
-              const result = await downloadFileandExtractMetadata(numericId);
-              const parsedStructure = parseFileStructure(result.text);
-              console.log("Loaded file structure from saved message ID:", parsedStructure);
-              setFileStructure(parsedStructure);
+              if (messageResult.content?.document) {
+                const result = await downloadFileandExtractMetadata(numericId);
+                const parsedStructure = loadFileStructureFromTelegram(
+                  result.text,
+                  result.editDateUnix,
+                );
+                setFileStructure(parsedStructure);
+              } else {
+                const parsedStructure = parseFileStructure(
+                  messageResult.content.text.text,
+                );
+                setFileStructure(parsedStructure);
+              }
               setIsFileStructureLoaded(true);
+              console.log("Loaded file structure from saved message ID");
               return numericId;
             } catch (parseError) {
               console.error("Error parsing file structure from saved message:", parseError);
@@ -174,7 +278,10 @@ const TelegramMessenger = () => {
             if (true) {
               const result = await downloadFileandExtractMetadata(foundId);
               console.log("downloadFileandExtractMetadata(inside findMessageId->searchChatMessages)", result.text, typeof result.text);
-              const parsedStructure = parseFileStructure(result.text);
+              const parsedStructure = loadFileStructureFromTelegram(
+                result.text,
+                result.editDateUnix
+              );
               console.log("Loaded file structure:", parsedStructure);
               setFileStructure(parsedStructure);
               setIsFileStructureLoaded(true);
@@ -218,7 +325,12 @@ const TelegramMessenger = () => {
             fromMessageId = historyResult.messages[historyResult.messages.length - 1].id;
             
             // Search for METADATA_STORAGE in the messages
-            foundMessage = historyResult.messages.find((msg) => messageLooksLikeMetadata(msg));
+            foundMessage = historyResult.messages.find(msg => 
+              msg.content && 
+              msg.content.caption && 
+              msg.content.caption.text && 
+              msg.content.caption.text.includes("METADATA_STORAGE")
+            );
             
             if (foundMessage) {
               const foundId = foundMessage.id;
@@ -232,7 +344,10 @@ const TelegramMessenger = () => {
                 if (true) {
                   const result = await downloadFileandExtractMetadata(foundId);
                   console.log("downloadFileandExtractMetadata(inside findMessageId->getChatHistory)", result.text, typeof result.text);
-                  const parsedStructure = parseFileStructure(result.text);
+                  const parsedStructure = loadFileStructureFromTelegram(
+                    result.text,
+                    result.editDateUnix
+                  );
                   console.log("Loaded file structure:", parsedStructure);
                   setFileStructure(parsedStructure);
                   setIsFileStructureLoaded(true);
@@ -274,62 +389,98 @@ const TelegramMessenger = () => {
       setIsFileStructureLoaded(true);
       return null;
     }
-  }, [selectedChatId]);
+  }, [selectedChatId, setContextMessageId, setFileStructure, setIsFileStructureLoaded]);
 
-  // Initialize MTProto (GramJS) — Web A style transport
+  const runChatBootstrap = useCallback(async () => {
+    if (!clientRef.current || !selectedChatId) {
+      return;
+    }
+    const generation = (bootstrapGenerationRef.current += 1);
+    setIsThumbsStoreLoaded(false);
+    const thumbsUiWait = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    try {
+      await runChatStorageBootstrap({
+        loadMetadata: findMessageId,
+        client: clientRef.current,
+        chatId: selectedChatId,
+      });
+      debugLog(
+        '[thumbs-boot] ui-ready',
+        Math.round(
+          (typeof performance !== 'undefined' ? performance.now() : Date.now()) - thumbsUiWait,
+        ),
+        'ms',
+      );
+      if (generation === bootstrapGenerationRef.current) {
+        setIsThumbsStoreLoaded(true);
+      }
+    } catch (error) {
+      console.error('Chat storage bootstrap failed:', error);
+      if (generation === bootstrapGenerationRef.current) {
+        setIsThumbsStoreLoaded(true);
+      }
+    }
+  }, [findMessageId, selectedChatId, setIsThumbsStoreLoaded]);
+
+  // Initialize MTProto (GramJS) with TDLib-compat shim for the rest of the app
   useEffect(() => {
     let cancelled = false;
 
     const initializeData = async () => {
       if (!clientRef.current) return;
-      
+
       try {
-        console.log("Initializing data...");
-        // Create a promise to fetch chats that can be awaited later
+        console.log('Initializing data...');
         getChatsPromiseRef.current = new Promise(async (resolve) => {
           try {
-            // Try to get a specific chat first
             try {
-              // Try to get the selected chat if available, otherwise this will fail and we'll try getChats instead
               if (!selectedChatId) {
                 throw new Error('No chat selected');
               }
               const response = await clientRef.current.send({
-                "@type": "getChat",
-                "chat_id": selectedChatId
+                '@type': 'getChat',
+                chat_id: selectedChatId,
               });
-              console.log("getChat succeeded:", response);
+              console.log('getChat succeeded:', response);
               setIsConnected(true);
-        setContextIsConnected(true);
+              setContextIsConnected(true);
               resolve(true);
             } catch (error) {
-              console.log("getChat failed, trying getChats instead. Error:", error);
-              
-              // If getting a specific chat fails, try to get all chats
-              // Add a delay to ensure authorization is complete
+              console.log('getChat failed, trying getChats instead. Error:', error);
               try {
                 const chatData = await clientRef.current.send({
-                  "@type": "getChats",
-                  "limit": 2000
+                  '@type': 'getChats',
+                  limit: 2000,
                 });
-                console.log("Chats fetched successfully:", chatData);
+                console.log('Chats fetched successfully:', chatData);
                 setIsConnected(true);
-        setContextIsConnected(true);
+                setContextIsConnected(true);
                 resolve(chatData);
               } catch (getChatsError) {
-                console.error("Error fetching chats with getChats:", getChatsError);
+                console.error('Error fetching chats with getChats:', getChatsError);
                 resolve(null);
               }
             }
           } catch (chatError) {
-            console.error("Error in chat initialization:", chatError);
-            // Don't reject, just resolve with null to prevent unhandled promise rejections
+            console.error('Error in chat initialization:', chatError);
             resolve(null);
           }
         });
-        console.log("Initializing data finished");
+        console.log('Initializing data finished');
       } catch (error) {
-        console.error("Error initializing data:", error);
+        console.error('Error initializing data:', error);
+      }
+    };
+
+    const onAuthorized = async () => {
+      setStatus('Connected to Telegram');
+      setIsConnected(true);
+      setContextIsConnected(true);
+      setAuthState('ready');
+      await initializeData();
+      findMessageId();
+      if (selectedChatId) {
+        runChatBootstrap();
       }
     };
 
@@ -345,25 +496,45 @@ const TelegramMessenger = () => {
 
         client.onUpdate = (update) => {
           if (!update || typeof update !== 'object') return;
-          if (update['@type'] !== 'updateAuthorizationState') return;
-          const state = update.authorization_state?.['@type'];
-          if (state === 'authorizationStateReady') {
-            setStatus('Connected to Telegram');
-            setIsConnected(true);
-            setContextIsConnected(true);
-            setAuthState('ready');
-            initializeData();
-            findMessageId();
+
+          if (update['@type'] === 'updateMessageSendSucceeded') {
+            debugLog('Message sent successfully:', update.message);
+            if (update.message.content?.text?.text?.includes('METADATA_STORAGE')) {
+              debugLog('METADATA_STORAGE message id:', update.message.id);
+              setMessageId(update.message.id);
+            }
+          }
+
+          if (update['@type'] !== 'updateAuthorizationState' || !update.authorization_state) {
+            return;
+          }
+
+          const currentAuthState = update.authorization_state['@type'];
+          switch (currentAuthState) {
+            case 'authorizationStateWaitPhoneNumber':
+              setStatus('Please enter your phone number');
+              setAuthState('waitPhoneNumber');
+              break;
+            case 'authorizationStateWaitCode':
+              setStatus('Please enter the verification code');
+              setAuthState('waitCode');
+              break;
+            case 'authorizationStateReady':
+              onAuthorized();
+              break;
+            case 'authorizationStateClosed':
+              setStatus('Connection closed');
+              setIsConnected(false);
+              setContextIsConnected(false);
+              setAuthState('initial');
+              break;
+            default:
+              break;
           }
         };
 
         if (client._gram && (await client._gram.checkAuthorization())) {
-          setStatus('Connected to Telegram');
-          setIsConnected(true);
-          setContextIsConnected(true);
-          setAuthState('ready');
-          await initializeData();
-          findMessageId();
+          await onAuthorized();
         } else {
           setStatus('Please sign in');
           setAuthState('waitPhoneNumber');
@@ -483,6 +654,13 @@ const TelegramMessenger = () => {
     }
   };
 
+  const throwIfTdlibError = (result) => {
+    if (result?.['@type'] === 'error') {
+      throw new Error(result.message || `TDLib error (code ${result.code ?? 'unknown'})`);
+    }
+    return result;
+  };
+
   // Edit an existing message in Telegram
   const editMessage = async (newMessage, message_id, chat_id) => {
     console.log("Editing message with ID:", message_id);
@@ -493,23 +671,25 @@ const TelegramMessenger = () => {
     let message;
 
     try {
-      message = window.tdClient.send({
-        '@type': 'editMessageMedia',
-        'chat_id': chat_id,
-        'message_id': message_id,
-        'input_message_content': {
-          '@type': 'inputMessageDocument',
-          'document': {
-            '@type': 'inputFileBlob',
-            'name': newMetadataFile.name,
-            'data': newMetadataFile
-          },
+      message = throwIfTdlibError(
+        await window.tdClient.send({
+          '@type': 'editMessageMedia',
+          'chat_id': chat_id,
+          'message_id': message_id,
+          'input_message_content': {
+            '@type': 'inputMessageDocument',
+            'document': {
+              '@type': 'inputFileBlob',
+              'name': newMetadataFile.name,
+              'data': newMetadataFile,
+            },
             'caption': {
               '@type': 'formattedText',
-              'text': 'METADATA_STORAGE'
-            }
-        }
-      });
+              'text': 'METADATA_STORAGE',
+            },
+          },
+        }),
+      );
 
       console.log("Message sent just now", message);
 
@@ -541,12 +721,12 @@ const TelegramMessenger = () => {
 
       // TODO: Fix this, Hacky: wait for 1 second before returning
       await new Promise(resolve => setTimeout(resolve, 1000));
-      return messageId;
+      return message;
       
     } catch(error) {
       console.error('Error sending message:', error);
       setStatus('Error sending message');
-      throw error;
+      throw error instanceof Error ? error : new Error(String(error));
     }
 
     try {
@@ -590,32 +770,54 @@ const TelegramMessenger = () => {
   // Update file structure in Telegram
   const updateFileStructure = async (updatedStructure) => {
     try {
-      setFileStructure(updatedStructure);
-      
-      // Serialize the file structure to message text
-      const messageText = serializeFileStructure(updatedStructure);
-      
-      // If we have a messageId, edit that message, otherwise send a new one
       if (!selectedChatId) {
         throw new Error('No chat selected. Please select a chat group first.');
       }
-      
+
+      // Re-fetch Telegram metadata so two devices do not clobber each other.
+      if (messageId) {
+        const remote = await downloadFileandExtractMetadata(messageId);
+        const remoteStructure = loadFileStructureFromTelegram(
+          remote.text,
+          remote.editDateUnix
+        );
+        const localTs = getMetadataTimestampMs(updatedStructure) ?? 0;
+        const remoteTs =
+          getMetadataTimestampMs(remoteStructure) ??
+          (remote.editDateUnix ? remote.editDateUnix * 1000 : 0);
+
+        if (remoteTs > localTs) {
+          console.warn(
+            'Remote metadata is newer than this device; refreshing local copy instead of uploading.',
+            { localTs, remoteTs }
+          );
+          setFileStructure(remoteStructure);
+          setStatus(
+            'Metadata was updated on another device. Your view has been refreshed — retry your change.'
+          );
+          return false;
+        }
+      }
+
+      const stampedStructure = stampFileStructureUpdatedAt(updatedStructure);
+      setFileStructure(stampedStructure);
+
+      const messageText = serializeFileStructure(stampedStructure);
+
       console.log('Updating file structure in chat ID:', selectedChatId);
-      
+
       if (messageId) {
         await editMessage(messageText, messageId, selectedChatId);
       } else {
         const result = await sendMessage(messageText, selectedChatId);
-        // If this is the first time sending the message, we need to update the messageId
         console.log("ResultId(in updateFileStructure):", result.id);
         if (result && result.id && !messageId) {
           setMessageId(result.id);
           setContextMessageId(result.id);
-          // Save the message ID to localStorage
           localStorage.setItem(MESSAGE_ID_KEY, result.id.toString());
         }
       }
-      
+
       return true;
     } catch (error) {
       console.error('Failed to update file structure:', error);
@@ -826,9 +1028,9 @@ const TelegramMessenger = () => {
   // Effect to find message ID when selected chat changes
   useEffect(() => {
     if (isConnected && selectedChatId) {
-      findMessageId();
+      runChatBootstrap();
     }
-  }, [isConnected, selectedChatId, findMessageId]);
+  }, [isConnected, selectedChatId, runChatBootstrap]);
 
 {/* I don't think this part where we're rendering anything or displaying ChatGroupSelector is needed. as we're doing all the Group selection processing and everything in Auth/GroupSelector.js. This was a legecy code when initially We used telegram messenger code as main code. Currently TelegramMessenger.js stays hidden off the screen, thus nothing needs to get displayed, just its updateAuthorizationState routing and telegramClient initialization etc are required which it can do from background i.e. when it is hidden and really we don't need to initialize the logic of ChatGroupSelector in it now.*/}
 {/* this is a 
