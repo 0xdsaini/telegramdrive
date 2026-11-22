@@ -19,7 +19,13 @@ const STREAMABLE_MIME_TYPE = /^(?:video|audio|image)\/[\w.+-]+$/;
 const deferredPromises = new Map();
 const streams = new Map();
 
+/** Set from the page via STREAM_DEBUG_FLAG (?debug=1). Off by default for mobile perf. */
+let swDebugEnabled = false;
+
 function swDebug(stage, msg, extra) {
+  if (!swDebugEnabled) {
+    return;
+  }
   console.log('[STREAM_DEBUG_SW]', stage, msg, extra || '');
   self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
     clients.forEach((client) => {
@@ -65,7 +71,9 @@ function parseInfo(params) {
 }
 
 function getStreamId(info) {
-  return String(info.fileId);
+  const size = Number(info.size) || 0;
+  const name = info.fileName || '';
+  return `${String(info.fileId)}:${size}:${name}`;
 }
 
 function responseForSafariFirstRange(range, mimeType, size) {
@@ -414,6 +422,7 @@ class Stream {
     const id = getStreamId(info);
     const existing = streams.get(id);
     if (existing) {
+      existing.info = { ...existing.info, ...info };
       if (preferredClientId) {
         existing.preferredClientId = preferredClientId;
       }
@@ -467,8 +476,23 @@ function toggleStreamInUse({ url, inUse }) {
 }
 
 self.addEventListener('message', (event) => {
+  if (event.data?.type === 'STREAM_DEBUG_FLAG') {
+    swDebugEnabled = Boolean(event.data.enabled);
+    return;
+  }
   if (event.data?.type === 'SKIP_WAITING') {
     self.skipWaiting();
+    return;
+  }
+  if (event.data?.type === 'FORCE_CLAIM') {
+    event.waitUntil(
+      self.clients
+        .claim()
+        .then(() => self.clients.matchAll({ type: 'window', includeUncontrolled: true }))
+        .then((clients) => {
+          swDebug('lifecycle', 'FORCE_CLAIM', { clientCount: clients.length });
+        })
+    );
     return;
   }
   if (event.data?.type === 'toggleStreamInUse') {
