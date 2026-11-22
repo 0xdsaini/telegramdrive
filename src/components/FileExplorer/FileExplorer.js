@@ -10,6 +10,7 @@ import { isStreamableMediaFileName, isVideoFileName, mimeTypeFromFileName } from
 import { generateVideoPosterJpeg } from '../../utils/generateVideoPosterJpeg';
 import { setCachedPoster } from '../../utils/thumbnailCache';
 import { streamDebug, streamDebugError } from '../../utils/streamDebug';
+import { lockLandscapeForPlayback } from '../../utils/playbackOrientation';
 import {
   prepareForStreaming,
   registerPlaybackFileId,
@@ -835,6 +836,7 @@ const FileExplorer = () => {
   // Handle file download
   const handleStreamPlay = async (fileName, e) => {
     e?.stopPropagation?.();
+    void lockLandscapeForPlayback();
     streamDebug('play', 'handleStreamPlay click', {
       fileName,
       swController: !!navigator.serviceWorker?.controller,

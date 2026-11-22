@@ -12,6 +12,11 @@ import {
 import { toggleStreamInUse } from '../../utils/streamBridge';
 import { isStreamUrl } from '../../utils/streamUrl';
 import { streamDebug, streamDebugError } from '../../utils/streamDebug';
+import {
+  isPortraitViewport,
+  lockLandscapeForPlayback,
+  unlockPlaybackOrientation,
+} from '../../utils/playbackOrientation';
 import './VideoPlayerModal.css';
 
 const VIDEO_EVENTS = [
@@ -106,6 +111,7 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
   const [immersiveMode, setImmersiveMode] = useState(false);
   const [seekRipple, setSeekRipple] = useState(null);
   const [centerFlash, setCenterFlash] = useState(null);
+  const [portraitViewport, setPortraitViewport] = useState(() => isPortraitViewport());
 
   const bumpControlsVisible = useCallback(() => {
     setShowControls(true);
@@ -222,23 +228,27 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
     [bumpControlsVisible, flashCenterTransport]
   );
 
-  const enterDefaultFullscreen = useCallback(async () => {
+  const enterMobilePlaybackChrome = useCallback(async () => {
     const stage = stageRef.current;
-    if (!stage || document.fullscreenElement) return;
+    if (!stage) return;
 
     const req =
       stage.requestFullscreen?.bind(stage)
       || stage.webkitRequestFullscreen?.bind(stage);
 
-    if (req) {
+    if (req && !document.fullscreenElement) {
       try {
         await req();
-        return;
       } catch {
-        /* fall through */
+        /* fall through to immersive */
       }
     }
-    setImmersiveMode(true);
+
+    if (!document.fullscreenElement) {
+      setImmersiveMode(true);
+    }
+
+    await lockLandscapeForPlayback();
   }, []);
 
   const handleVideoAreaSeek = useCallback(
@@ -387,6 +397,7 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
     if (req) {
       try {
         await req();
+        await lockLandscapeForPlayback();
         bumpControlsVisible();
         return;
       } catch {
@@ -395,6 +406,7 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
     }
 
     setImmersiveMode(true);
+    await lockLandscapeForPlayback();
     bumpControlsVisible();
   }, [bumpControlsVisible, immersiveMode]);
 
@@ -427,20 +439,30 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
       clearTapGesture();
       setSeekRipple(null);
       setCenterFlash(null);
+      unlockPlaybackOrientation();
       document.body.classList.remove('yt-player-open');
       return undefined;
     }
     document.body.classList.add('yt-player-open');
-    return () => document.body.classList.remove('yt-player-open');
+    return () => {
+      document.body.classList.remove('yt-player-open');
+      unlockPlaybackOrientation();
+    };
   }, [open, clearTapGesture]);
 
   useEffect(() => {
     if (!open || !IS_COARSE_POINTER) return undefined;
-    const timer = window.setTimeout(() => {
-      enterDefaultFullscreen();
-    }, 0);
-    return () => clearTimeout(timer);
-  }, [open, enterDefaultFullscreen]);
+    const mq = window.matchMedia('(orientation: portrait)');
+    const sync = () => setPortraitViewport(mq.matches);
+    sync();
+    mq.addEventListener('change', sync);
+    return () => mq.removeEventListener('change', sync);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || !IS_COARSE_POINTER) return undefined;
+    void enterMobilePlaybackChrome();
+  }, [open, enterMobilePlaybackChrome]);
 
   useEffect(() => {
     if (!immersiveMode) return undefined;
@@ -706,6 +728,14 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
         onMouseMove={bumpControlsVisible}
         onTouchStart={bumpControlsVisible}
       >
+        {IS_COARSE_POINTER && portraitViewport ? (
+          <div className="yt-player-rotate-hint" aria-live="polite">
+            <span className="yt-player-rotate-hint__icon" aria-hidden>
+              ↻
+            </span>
+            Rotate your phone sideways for full-screen playback
+          </div>
+        ) : null}
         <div className="yt-player-topbar" onClick={(e) => e.stopPropagation()}>
           <button
             type="button"
