@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   FaTimes,
   FaPlay,
@@ -50,6 +50,8 @@ const CENTER_FLASH_MS = 480;
 const SEEK_STACK_MS = 650;
 const TOUCH_CLICK_GUARD_MS = 900;
 const TRANSPORT_LOCK_MS = 450;
+const SWIPE_DISMISS_CLOSE_PX = 110;
+const SWIPE_DISMISS_AXIS_PX = 16;
 
 const IS_COARSE_POINTER =
   typeof window !== 'undefined'
@@ -78,6 +80,14 @@ function getBufferSegments(video) {
 const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) => {
   const stageRef = useRef(null);
   const videoRef = useRef(null);
+  const swipeDismissYRef = useRef(0);
+  const swipeGestureRef = useRef({
+    startX: 0,
+    startY: 0,
+    tracking: false,
+    axisChosen: false,
+    dismissing: false,
+  });
   const hideControlsTimer = useRef(null);
   const scrubbingRef = useRef(false);
   const progressRef = useRef(null);
@@ -112,6 +122,8 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
   const [seekRipple, setSeekRipple] = useState(null);
   const [centerFlash, setCenterFlash] = useState(null);
   const [portraitViewport, setPortraitViewport] = useState(() => isPortraitViewport());
+  const [swipeDismissY, setSwipeDismissY] = useState(0);
+  const [swipeDismissDragging, setSwipeDismissDragging] = useState(false);
 
   const bumpControlsVisible = useCallback(() => {
     setShowControls(true);
@@ -228,7 +240,7 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
     [bumpControlsVisible, flashCenterTransport]
   );
 
-  const enterMobilePlaybackChrome = useCallback(async () => {
+  const enterPlaybackChrome = useCallback(async () => {
     const stage = stageRef.current;
     if (!stage) return;
 
@@ -249,6 +261,19 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
     }
 
     await lockLandscapeForPlayback();
+  }, []);
+
+  const resetSwipeDismiss = useCallback(() => {
+    swipeDismissYRef.current = 0;
+    setSwipeDismissY(0);
+    setSwipeDismissDragging(false);
+  }, []);
+
+  const applySwipeDismissOffset = useCallback((dy) => {
+    const offset = Math.max(0, dy);
+    swipeDismissYRef.current = offset;
+    setSwipeDismissY(offset);
+    setSwipeDismissDragging(offset > 0);
   }, []);
 
   const handleVideoAreaSeek = useCallback(
@@ -308,10 +333,81 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
     [bumpControlsVisible, showControls]
   );
 
+  const handleStageSwipeTouchStartCapture = useCallback((e) => {
+    if (!IS_COARSE_POINTER || e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    swipeGestureRef.current = {
+      startX: touch.clientX,
+      startY: touch.clientY,
+      tracking: true,
+      axisChosen: false,
+      dismissing: false,
+    };
+  }, []);
+
+  const handleStageSwipeTouchMove = useCallback(
+    (e) => {
+      if (!IS_COARSE_POINTER || e.touches.length !== 1) return;
+      const swipe = swipeGestureRef.current;
+      if (!swipe.tracking) return;
+
+      const touch = e.touches[0];
+      const dx = touch.clientX - swipe.startX;
+      const dy = touch.clientY - swipe.startY;
+
+      if (!swipe.axisChosen) {
+        if (
+          Math.abs(dx) < SWIPE_DISMISS_AXIS_PX
+          && Math.abs(dy) < SWIPE_DISMISS_AXIS_PX
+        ) {
+          return;
+        }
+        swipe.axisChosen = true;
+        if (dy > SWIPE_DISMISS_AXIS_PX && dy > Math.abs(dx) * 1.15) {
+          swipe.dismissing = true;
+          clearTapGesture();
+        }
+      }
+
+      if (!swipe.dismissing || dy <= 0) return;
+
+      e.preventDefault();
+      applySwipeDismissOffset(dy);
+    },
+    [applySwipeDismissOffset, clearTapGesture]
+  );
+
+  const handleStageSwipeTouchEndCapture = useCallback(
+    (e) => {
+      if (!IS_COARSE_POINTER || e.changedTouches.length !== 1) return;
+      const swipe = swipeGestureRef.current;
+      if (!swipe.tracking) return;
+
+      swipe.tracking = false;
+
+      if (swipe.dismissing) {
+        const offset = swipeDismissYRef.current;
+        swipe.dismissing = false;
+        swipe.axisChosen = false;
+        if (offset >= SWIPE_DISMISS_CLOSE_PX) {
+          resetSwipeDismiss();
+          onClose();
+          return;
+        }
+        resetSwipeDismiss();
+      }
+    },
+    [onClose, resetSwipeDismiss]
+  );
+
   const handleVideoTouchEnd = useCallback(
     (e) => {
       if (e.changedTouches.length !== 1) return;
       lastTouchAtRef.current = Date.now();
+
+      if (IS_COARSE_POINTER && swipeGestureRef.current.dismissing) {
+        return;
+      }
       const touch = e.changedTouches[0];
       const rect = e.currentTarget.getBoundingClientRect();
       const x = touch.clientX - rect.left;
@@ -440,6 +536,10 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
       setSeekRipple(null);
       setCenterFlash(null);
       unlockPlaybackOrientation();
+      resetSwipeDismiss();
+      if (document.fullscreenElement) {
+        document.exitFullscreen?.().catch(() => {});
+      }
       document.body.classList.remove('yt-player-open');
       return undefined;
     }
@@ -448,7 +548,7 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
       document.body.classList.remove('yt-player-open');
       unlockPlaybackOrientation();
     };
-  }, [open, clearTapGesture]);
+  }, [open, clearTapGesture, resetSwipeDismiss]);
 
   useEffect(() => {
     if (!open || !IS_COARSE_POINTER) return undefined;
@@ -459,10 +559,20 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
     return () => mq.removeEventListener('change', sync);
   }, [open]);
 
+  useLayoutEffect(() => {
+    if (!open) return undefined;
+    void enterPlaybackChrome();
+    return undefined;
+  }, [open, enterPlaybackChrome]);
+
   useEffect(() => {
     if (!open || !IS_COARSE_POINTER) return undefined;
-    void enterMobilePlaybackChrome();
-  }, [open, enterMobilePlaybackChrome]);
+    const el = stageRef.current;
+    if (!el) return undefined;
+    const onMove = (e) => handleStageSwipeTouchMove(e);
+    el.addEventListener('touchmove', onMove, { passive: false });
+    return () => el.removeEventListener('touchmove', onMove);
+  }, [open, handleStageSwipeTouchMove]);
 
   useEffect(() => {
     if (!immersiveMode) return undefined;
@@ -710,6 +820,8 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
   }
 
   const playedPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
+  const swipeBackdropOpacity =
+    swipeDismissY > 0 ? Math.max(0.2, 1 - swipeDismissY / 480) : undefined;
 
   return (
     <div
@@ -718,15 +830,30 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
       aria-modal="true"
       aria-label={title}
       onClick={onClose}
+      style={swipeBackdropOpacity != null ? { opacity: swipeBackdropOpacity } : undefined}
     >
       <div
         ref={stageRef}
         className={`yt-player-stage${isFullscreen ? ' yt-player-stage--fullscreen' : ''}${
           immersiveMode ? ' yt-player-stage--immersive' : ''
-        }${showControls ? ' yt-player-stage--controls-visible' : ''}`}
+        }${showControls ? ' yt-player-stage--controls-visible' : ''}${
+          swipeDismissDragging ? ' yt-player-stage--swipe-dismiss' : ''
+        }`}
         onClick={(e) => e.stopPropagation()}
         onMouseMove={bumpControlsVisible}
         onTouchStart={bumpControlsVisible}
+        onTouchStartCapture={handleStageSwipeTouchStartCapture}
+        onTouchEndCapture={handleStageSwipeTouchEndCapture}
+        style={
+          swipeDismissY > 0
+            ? {
+                transform: `translateY(${swipeDismissY}px) scale(${
+                  Math.max(0.88, 1 - swipeDismissY / 1200)
+                })`,
+                opacity: Math.max(0.55, 1 - swipeDismissY / 520),
+              }
+            : undefined
+        }
       >
         {IS_COARSE_POINTER && portraitViewport ? (
           <div className="yt-player-rotate-hint" aria-live="polite">

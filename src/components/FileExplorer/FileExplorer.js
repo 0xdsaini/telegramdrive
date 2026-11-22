@@ -866,7 +866,12 @@ const FileExplorer = () => {
       }
 
       setError(null);
-      setSuccess(`Opening ${fileName}…`);
+      setStreamPlayer({
+        open: true,
+        url: '',
+        title: fileName,
+        fileId: null,
+      });
 
       const [resolved] = await Promise.all([
         resolveTelegramFile(
@@ -936,7 +941,7 @@ const FileExplorer = () => {
       setSuccess(null);
     } catch (playError) {
       streamDebugError('play', 'handleStreamPlay failed', playError);
-      setSuccess(null);
+      setStreamPlayer({ open: false, url: '', title: '', fileId: null });
       setError(playError.message || 'Failed to start streaming playback.');
     }
   };

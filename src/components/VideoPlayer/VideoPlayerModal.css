@@ -7,6 +7,12 @@
   justify-content: center;
   z-index: 11000;
   padding: 12px;
+  transition: opacity 0.22s ease;
+}
+
+.yt-player-stage--swipe-dismiss {
+  transition: none;
+  touch-action: none;
 }
 
 .yt-player-stage {
@@ -18,6 +24,7 @@
   border-radius: 12px;
   overflow: hidden;
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+  transition: transform 0.22s ease, opacity 0.22s ease;
 }
 
 .yt-player-stage--fullscreen,
