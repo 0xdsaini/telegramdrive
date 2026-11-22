@@ -87,7 +87,7 @@ return /******/ (function(modules) { // webpackBootstrap
 /******/ 	__webpack_require__.o = function(object, property) { return Object.prototype.hasOwnProperty.call(object, property); };
 /******/
 /******/ 	// __webpack_public_path__
-/******/ 	__webpack_require__.p = (function(){try{for(var s=document.getElementsByTagName("script"),i=s.length-1;i>=0;i--){var u=s[i].src;if(u&&/\/tdweb\.js(\?|$)/.test(u))return u.replace(/[^/]*$/,"")}}catch(e){}return""})();
+/******/ 	__webpack_require__.p = "";
 /******/
 /******/
 /******/ 	// Load entry module and return exports
