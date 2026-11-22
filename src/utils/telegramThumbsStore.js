@@ -514,7 +514,7 @@ async function loadThumbsStore(client, chatId) {
     sqlTimer({});
     slot.SQL = SQL;
     await buildUnionThumbsDatabase(client, chatId, slot, SQL, {
-      includeRemote: true,
+      includeRemote: false,
     });
     const bytes = exportThumbsDatabase(slot.db);
     await writeCachedDbFile(chatId, bytes, getThumbsUpdatedAt(slot.db) ?? Date.now());
@@ -528,7 +528,8 @@ async function loadThumbsStore(client, chatId) {
       .catch((error) => {
         console.warn('Deferred thumbs IDB hydrate failed:', error);
       });
-    bootDone({ posterCount: listPosterKeys(slot.db).length });
+    bootDone({ posterCount: listPosterKeys(slot.db).length, path: 'local-first' });
+    scheduleRemoteThumbsRefresh(client, chatId);
     slot.loadPromise = null;
   })();
 

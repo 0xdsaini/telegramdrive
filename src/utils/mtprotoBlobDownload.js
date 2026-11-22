@@ -1,6 +1,46 @@
 import { DOWNLOAD_WORKERS, runWithWorkerPool } from '../mtproto/downloadConcurrency';
+import { bytesFromReadFilePart } from './readFilePartBytes';
 
-const READ_CHUNK = 1024 * 1024;
+const READ_CHUNK = 512 * 1024;
+
+/**
+ * Download any file id via the TDLib-compat readFilePart shim (16 parallel workers on MTProto).
+ */
+export async function readFullFileBlob(client, fileId, mimeType = 'application/octet-stream') {
+  if (!client?.send) {
+    throw new Error('Telegram client not ready');
+  }
+
+  const info = await client.send({ '@type': 'getFile', file_id: fileId });
+  if (info?.['@type'] === 'error') {
+    throw new Error(info.message || 'getFile failed');
+  }
+
+  const size = info.size || 0;
+  if (size <= 0) {
+    throw new Error(`Empty file (file_id=${fileId})`);
+  }
+
+  const ranges = [];
+  for (let offset = 0; offset < size; offset += READ_CHUNK) {
+    ranges.push({ offset, count: Math.min(READ_CHUNK, size - offset) });
+  }
+
+  const chunkData = await runWithWorkerPool(ranges, async ({ offset, count }) => {
+    const part = await client.send({
+      '@type': 'readFilePart',
+      file_id: fileId,
+      offset,
+      count,
+    });
+    if (part?.['@type'] === 'error') {
+      throw new Error(part.message || `readFilePart failed at ${offset}`);
+    }
+    return bytesFromReadFilePart(part);
+  }, DOWNLOAD_WORKERS);
+
+  return new Blob(chunkData, { type: mimeType || info.mime_type || 'application/octet-stream' });
+}
 
 /**
  * Full-file download via GramJS upload.GetFile (readFilePart shim), with progress callbacks.

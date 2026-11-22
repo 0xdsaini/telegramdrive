@@ -11,8 +11,10 @@ import {
   capturePosterAfterSeeks,
   waitForVideoEvent,
 } from './videoPosterCanvas';
+import { DOWNLOAD_WORKERS } from '../mtproto/downloadConcurrency';
 
-const MAX_BACKFILL_CONCURRENT = 1;
+/** Stream decode is heavier than GetFile; cap below full download pool. */
+const MAX_BACKFILL_CONCURRENT = Math.max(4, Math.floor(DOWNLOAD_WORKERS / 2));
 let backfillActive = 0;
 const backfillWaitQueue = [];
 

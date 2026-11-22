@@ -2,7 +2,9 @@ import { getCachedPoster, deleteCachedPoster } from './thumbnailCache';
 import { isTrustedPosterSource } from './posterSources';
 import { whenThumbsStorePendingWork } from './telegramThumbsStore';
 
-const MAX_CONCURRENT = 4;
+import { DOWNLOAD_WORKERS } from '../mtproto/downloadConcurrency';
+
+const MAX_CONCURRENT = DOWNLOAD_WORKERS;
 let active = 0;
 const waitQueue = [];
 

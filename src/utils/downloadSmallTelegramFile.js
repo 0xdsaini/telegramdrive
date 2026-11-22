@@ -1,4 +1,5 @@
 import { bytesFromReadFilePart } from './readFilePartBytes';
+import { readFullFileBlob } from './mtprotoBlobDownload';
 import { createThumbsBootTimer } from './thumbsBootstrapDebug';
 
 async function readBlobIfComplete(client, fileId, info, mimeType) {
@@ -35,6 +36,12 @@ export async function downloadSmallTelegramFile(
   { mimeType = 'image/jpeg', maxWaitMs = 25_000, label = 'small-file' } = {},
 ) {
   const done = createThumbsBootTimer(`downloadSmallTelegramFile:${label}`);
+
+  if (client?._gram) {
+    const blob = await readFullFileBlob(client, fileId, mimeType);
+    done({ fileId, byteLength: blob.size, path: 'mtproto-parallel' });
+    return blob;
+  }
 
   let info = await client.send({
     '@type': 'getFile',

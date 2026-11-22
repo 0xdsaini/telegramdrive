@@ -135,11 +135,19 @@ export function createTdlibCompatShim(gram, { apiId, apiHash, saveSession, onAut
 
         case 'getFile': {
           const doc = getDocumentByFileId(req.file_id);
+          const size = doc?.size || 0;
+          const ready = Boolean(doc && size > 0);
           return {
             '@type': 'file',
             id: req.file_id,
-            size: doc?.size || 0,
-            local: { downloaded_prefix_size: 0, is_downloading_completed: false },
+            size,
+            mime_type: doc?.mimeType || undefined,
+            local: {
+              downloaded_prefix_size: ready ? size : 0,
+              downloaded_size: ready ? size : 0,
+              is_downloading_completed: ready,
+              is_downloading_active: false,
+            },
           };
         }
 
