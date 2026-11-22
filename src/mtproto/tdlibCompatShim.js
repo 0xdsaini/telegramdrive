@@ -9,8 +9,18 @@ import {
 } from './refreshDocumentReference';
 
 function dialogChatId(dialog) {
-  const id = dialog?.id ?? dialog?.entity?.id;
-  return typeof id === 'bigint' ? Number(id) : id;
+  // GramJS `dialog.id` is the marked peer id (e.g. -100…); entity.id alone breaks supergroups.
+  const marked = dialog?.id;
+  if (marked != null) {
+    return typeof marked === 'bigint' ? Number(marked) : marked;
+  }
+  const entity = dialog?.entity;
+  if (!entity?.id) return null;
+  const raw = typeof entity.id === 'bigint' ? Number(entity.id) : entity.id;
+  if (entity.className === 'Channel' || entity.className === 'ChannelForbidden') {
+    return -1_000_000_000_000 - raw;
+  }
+  return raw;
 }
 
 export function createTdlibCompatShim(gram, { apiId, apiHash, saveSession, onAuthReady }) {

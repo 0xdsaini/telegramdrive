@@ -1,11 +1,13 @@
 import { getAppBasePath } from './appBasePath';
 import { requestMtprotoFilePart, cancelMtprotoFilePartRequests } from '../mtproto/requestFilePartMtproto';
+import { DOWNLOAD_WORKERS } from '../mtproto/downloadConcurrency';
 import { streamDebug, streamDebugError } from './streamDebug';
 
 let registered = false;
 let activeClient = null;
 let registrationRef = null;
-const STREAM_SW_REV = 11;
+let partRequestsInflight = 0;
+const STREAM_SW_REV = 12;
 function getScope() {
   const base = getAppBasePath();
   return base ? `${base}/` : '/';
@@ -123,9 +125,8 @@ async function handleStreamRequest(event) {
   const { fileId, size, offset, limit, messageId, chatId } = payload;
   const t0 = performance.now();
   const gram = activeClient._gram;
-
-  // Web A handles each SW range independently; do not serialize unrelated offsets.
   (async () => {
+    partRequestsInflight += 1;
     try {
       const bytes = await requestMtprotoFilePart(gram, fileId, size, offset, limit, {
         messageId,
@@ -138,11 +139,15 @@ async function handleStreamRequest(event) {
         limit,
         byteLength: buffer.byteLength,
         ms: Math.round(performance.now() - t0),
+        inflight: partRequestsInflight,
+        workers: DOWNLOAD_WORKERS,
       });
       port.postMessage({ bytes: buffer }, [buffer]);
     } catch (error) {
       streamDebugError('bridge', 'STREAM_REQUEST_PART failed', error);
       port.postMessage({ error: error.message || String(error) });
+    } finally {
+      partRequestsInflight = Math.max(0, partRequestsInflight - 1);
     }
   })();
 }
@@ -177,7 +182,9 @@ export function isStreamingReadyForPlayback() {
 /**
  * Re-claim the stream service worker and verify TDLib before playback (idle tabs often lose SW control).
  */
-export async function prepareForStreaming(telegramClient, { timeoutMs = 15_000, skipTdlibProbe = false } = {}) {
+export async function prepareForStreaming(telegramClient, { timeoutMs = 15_000, skipTdlibProbe } = {}) {
+  const probeMtproto = telegramClient?._gram != null;
+  const shouldSkipProbe = skipTdlibProbe ?? probeMtproto;
   if (telegramClient) {
     setStreamBridgeClient(telegramClient);
   }
@@ -185,7 +192,7 @@ export async function prepareForStreaming(telegramClient, { timeoutMs = 15_000, 
 
   if (navigator.serviceWorker?.controller) {
     streamDebug('bridge', 'prepareForStreaming: service worker already controlling');
-    if (telegramClient && !skipTdlibProbe) {
+    if (telegramClient && !shouldSkipProbe) {
       await assertTdlibResponsive(telegramClient, 5_000);
     }
     return;
@@ -199,7 +206,7 @@ export async function prepareForStreaming(telegramClient, { timeoutMs = 15_000, 
     );
   }
 
-  if (telegramClient && !skipTdlibProbe) {
+  if (telegramClient && !shouldSkipProbe) {
     await assertTdlibResponsive(telegramClient);
   }
 }

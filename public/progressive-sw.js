@@ -4,7 +4,7 @@
  * File bytes are fetched from the page via TDLib (downloadFile + readFilePart).
  * STREAM_SW_REV=6 — TDLib: sequential 1 MiB parts (no single 2 MiB downloadFile).
  */
-const STREAM_SW_REV = 11;
+const STREAM_SW_REV = 12;
 
 const STREAM_CHUNK_MIDDLE_LIMIT = 512 * 1024;
 const STREAM_CHUNK_UPPER_LIMIT = 1024 * 1024;
@@ -275,6 +275,9 @@ class Stream {
     if (this.loadedOffsets.has(alignedOffset) && fromPreload) {
       return new Uint8Array(0);
     }
+    if (!fromPreload) {
+      this.loadedOffsets.delete(alignedOffset);
+    }
     this.loadedOffsets.add(alignedOffset);
 
     const payloadLimit = limit;
@@ -367,8 +370,10 @@ class Stream {
 
     let ab;
     if (needsSecondChunk) {
-      const p1 = await this.requestFilePart(alignedOffset, limit);
-      const p2 = await this.requestFilePart(alignedOffset + limit, limit);
+      const [p1, p2] = await Promise.all([
+        this.requestFilePart(alignedOffset, limit),
+        this.requestFilePart(alignedOffset + limit, limit),
+      ]);
       ab = bufferConcats(p1, p2);
     } else {
       ab = await this.requestFilePart(alignedOffset, limit);

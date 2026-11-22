@@ -7,6 +7,7 @@ import {
   isFileReferenceError,
   refreshDocumentFileReference,
 } from './refreshDocumentReference';
+import { runWithWorkerPool } from './downloadConcurrency';
 
 const inFlightParts = new Map();
 
@@ -84,6 +85,57 @@ async function invokeGetFileOnce(client, doc, offset, reqLimit, precise) {
   }
 }
 
+function planSliceTasks(offset, want, size) {
+  const tasks = [];
+  let pos = offset;
+  let left = want;
+  while (left > 0) {
+    const remainingHere = size ? Math.max(0, size - pos) : left;
+    const sliceLen = Math.min(left, MAX_CHUNK_SIZE, remainingHere || left);
+    tasks.push({ pos, sliceLen });
+    pos += sliceLen;
+    left -= sliceLen;
+  }
+  return tasks;
+}
+
+async function fetchSliceBytes(client, doc, pos, sliceLen, size) {
+  const parts = [];
+  let collected = 0;
+  let cur = pos;
+  while (collected < sliceLen) {
+    const left = sliceLen - collected;
+    const remainingHere = size ? Math.max(0, size - cur) : left;
+    const step = Math.min(left, MAX_CHUNK_SIZE, remainingHere || left);
+    const { limit: reqLimit, precise } = normalizeGetFileLimit(cur, step, size || undefined);
+    const bytes = await invokeGetFileOnce(client, doc, cur, reqLimit, precise);
+    if (!bytes.byteLength) {
+      throw new Error(`upload.GetFile empty at offset ${cur}`);
+    }
+    const take = Math.min(bytes.byteLength, left);
+    parts.push(bytes.subarray(0, take));
+    collected += take;
+    cur += take;
+    if (take < reqLimit && size && cur >= size) {
+      break;
+    }
+  }
+  if (!parts.length) {
+    throw new Error(`upload.GetFile returned no data for slice at ${pos}`);
+  }
+  if (parts.length === 1) {
+    return parts[0];
+  }
+  const total = parts.reduce((n, p) => n + p.byteLength, 0);
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const part of parts) {
+    out.set(part, at);
+    at += part.byteLength;
+  }
+  return out;
+}
+
 async function fetchPartBytes(client, doc, offset, limit, fileSize = doc.size) {
   const size = Number(fileSize || doc.size || 0);
   const remainingTotal = size ? Math.max(0, size - offset) : limit;
@@ -92,43 +144,24 @@ async function fetchPartBytes(client, doc, offset, limit, fileSize = doc.size) {
   }
 
   const want = Math.min(limit, remainingTotal || limit);
-  const parts = [];
-  let pos = offset;
-  let collected = 0;
+  const tasks = planSliceTasks(offset, want, size);
 
-  while (collected < want) {
-    const left = want - collected;
-    const remainingHere = size ? Math.max(0, size - pos) : left;
-    const step = Math.min(left, MAX_CHUNK_SIZE, remainingHere || left);
-    const { limit: reqLimit, precise } = normalizeGetFileLimit(pos, step, size || undefined);
-    const bytes = await invokeGetFileOnce(client, doc, pos, reqLimit, precise);
-    if (!bytes.byteLength) {
-      break;
-    }
-    const take = Math.min(bytes.byteLength, left);
-    parts.push(bytes.subarray(0, take));
-    collected += take;
-    pos += take;
-    if (take < reqLimit && size && pos >= size) {
-      break;
-    }
-    if (bytes.byteLength < MIN_CHUNK_SIZE && take === bytes.byteLength) {
-      break;
-    }
-  }
+  const slices = await runWithWorkerPool(tasks, async ({ pos, sliceLen }) =>
+    fetchSliceBytes(client, doc, pos, sliceLen, size)
+  );
 
-  if (!parts.length) {
+  if (!slices.length) {
     throw new Error('upload.GetFile returned no data for range');
   }
 
-  if (parts.length === 1) {
-    return parts[0];
+  if (slices.length === 1) {
+    return slices[0];
   }
 
-  const total = parts.reduce((n, p) => n + p.byteLength, 0);
+  const total = slices.reduce((n, p) => n + p.byteLength, 0);
   const out = new Uint8Array(total);
   let at = 0;
-  for (const part of parts) {
+  for (const part of slices) {
     out.set(part, at);
     at += part.byteLength;
   }

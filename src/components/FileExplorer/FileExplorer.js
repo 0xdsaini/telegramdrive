@@ -7,6 +7,7 @@ import { getStreamUrl } from '../../utils/streamUrl';
 import { isStreamableMediaFileName, mimeTypeFromFileName } from '../../utils/mimeTypes';
 import { streamDebug, streamDebugError } from '../../utils/streamDebug';
 import { prepareForStreaming } from '../../utils/streamBridge';
+import { downloadFileViaMtproto } from '../../utils/mtprotoBlobDownload';
 import { createEmptyFileStructure, findFolderByPath, createFolder, deleteFolder, moveFolder, addFile, deleteFile, moveFile } from '../../utils/fileStructureUtils';
 import { TelegramContext } from '../../context/TelegramContext';
 import UntrackedFilesPanel from './UntrackedFilesPanel';
@@ -993,7 +994,16 @@ const FileExplorer = () => {
           setError(`Error retrieving file info: ${fileInfoError.message || 'Unknown error'}`);
           return;
         }
-        
+
+        if (telegramClient?._gram) {
+          setSuccess(`Downloading ${fileName} via MTProto...`);
+          await downloadFileViaMtproto(telegramClient, fileInfo, fileName, (pct) => {
+            setSuccess(`Downloading ${fileName}... ${pct}%`);
+          });
+          setSuccess(`Downloaded ${fileName} successfully`);
+          return;
+        }
+
         // Download the file using TDLib with streaming approach
         let downloadResult;
         try {
