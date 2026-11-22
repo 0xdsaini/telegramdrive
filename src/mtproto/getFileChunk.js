@@ -11,13 +11,13 @@ export const ONE_MB = 1024 * 1024;
  */
 export function maxGetFileLimitAtOffset(offset) {
   let cap = MAX_CHUNK_SIZE;
-  if (offset % MAX_CHUNK_SIZE !== 0) {
-    // Telegram rejects large limits when offset is not 512 KiB–aligned (empirical / tt).
-    cap = MAX_CHUNK_SIZE / 2;
-  }
   const inMbRemainder = offset % ONE_MB;
   if (inMbRemainder !== 0) {
     cap = Math.min(cap, ONE_MB - inMbRemainder);
+  }
+  // Second half of each 1 MiB DC window: empirically max 256 KiB per request.
+  if (inMbRemainder >= MAX_CHUNK_SIZE) {
+    cap = Math.min(cap, MAX_CHUNK_SIZE / 2);
   }
   return Math.max(MIN_CHUNK_SIZE, cap - (cap % MIN_CHUNK_SIZE));
 }
