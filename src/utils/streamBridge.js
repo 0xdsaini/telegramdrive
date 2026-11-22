@@ -1,29 +1,11 @@
 import { getAppBasePath } from './appBasePath';
-import {
-  requestTdlibFilePart,
-  cancelTdlibFilePartRequests,
-  cancelTdlibFileDownloads,
-  prioritizeStreamingDownloads,
-} from './tdlibFilePartReader';
+import { requestMtprotoFilePart, cancelMtprotoFilePartRequests } from '../mtproto/requestFilePartMtproto';
 import { streamDebug, streamDebugError } from './streamDebug';
 
 let registered = false;
 let activeClient = null;
 let registrationRef = null;
-const STREAM_SW_REV = 7;
-const partRequestChains = new Map();
-
-function withFilePartQueue(fileId, task) {
-  const prev = partRequestChains.get(fileId) ?? Promise.resolve();
-  const run = prev.catch(() => {}).then(task);
-  partRequestChains.set(fileId, run);
-  return run.finally(() => {
-    if (partRequestChains.get(fileId) === run) {
-      partRequestChains.delete(fileId);
-    }
-  });
-}
-
+const STREAM_SW_REV = 11;
 function getScope() {
   const base = getAppBasePath();
   return base ? `${base}/` : '/';
@@ -132,19 +114,22 @@ async function handleStreamRequest(event) {
     port.postMessage({ error: 'Missing payload' });
     return;
   }
-  if (!activeClient) {
-    streamDebugError('bridge', 'STREAM_REQUEST_PART: TDLib client not set', payload);
-    port.postMessage({ error: 'TDLib client not ready' });
+  if (!activeClient?._gram) {
+    streamDebugError('bridge', 'STREAM_REQUEST_PART: MTProto client not set', payload);
+    port.postMessage({ error: 'Telegram client not ready' });
     return;
   }
 
-  const { fileId, size, offset, limit, fromPreload } = payload;
+  const { fileId, size, offset, limit, messageId, chatId } = payload;
   const t0 = performance.now();
+  const gram = activeClient._gram;
 
-  withFilePartQueue(fileId, async () => {
+  // Web A handles each SW range independently; do not serialize unrelated offsets.
+  (async () => {
     try {
-      const bytes = await requestTdlibFilePart(activeClient, fileId, size, offset, limit, {
-        fromPreload: !!fromPreload,
+      const bytes = await requestMtprotoFilePart(gram, fileId, size, offset, limit, {
+        messageId,
+        chatId,
       });
       const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
       streamDebug('bridge', 'STREAM_REQUEST_PART OK', {
@@ -159,7 +144,7 @@ async function handleStreamRequest(event) {
       streamDebugError('bridge', 'STREAM_REQUEST_PART failed', error);
       port.postMessage({ error: error.message || String(error) });
     }
-  });
+  })();
 }
 
 export function setStreamBridgeClient(telegramClient) {
@@ -185,14 +170,27 @@ async function assertTdlibResponsive(client, timeoutMs = 10_000) {
   }
 }
 
+export function isStreamingReadyForPlayback() {
+  return !!navigator.serviceWorker?.controller && !!activeClient;
+}
+
 /**
  * Re-claim the stream service worker and verify TDLib before playback (idle tabs often lose SW control).
  */
-export async function prepareForStreaming(telegramClient, { timeoutMs = 15_000 } = {}) {
+export async function prepareForStreaming(telegramClient, { timeoutMs = 15_000, skipTdlibProbe = false } = {}) {
   if (telegramClient) {
     setStreamBridgeClient(telegramClient);
   }
   await ensureStreamBridgeRegistered();
+
+  if (navigator.serviceWorker?.controller) {
+    streamDebug('bridge', 'prepareForStreaming: service worker already controlling');
+    if (telegramClient && !skipTdlibProbe) {
+      await assertTdlibResponsive(telegramClient, 5_000);
+    }
+    return;
+  }
+
   await waitForStreamServiceWorkerControl({ timeoutMs });
 
   if (!navigator.serviceWorker?.controller) {
@@ -201,7 +199,7 @@ export async function prepareForStreaming(telegramClient, { timeoutMs = 15_000 }
     );
   }
 
-  if (telegramClient) {
+  if (telegramClient && !skipTdlibProbe) {
     await assertTdlibResponsive(telegramClient);
   }
 }
@@ -241,13 +239,9 @@ async function ensureStreamBridgeRegistered() {
       if (event.data?.type === 'STREAM_REQUEST_PART') {
         handleStreamRequest(event);
       }
-      if (event.data?.type === 'STREAM_PRIORITIZE') {
-        streamDebug('bridge', 'STREAM_PRIORITIZE (noop)', { fileId: event.data.fileId });
-        prioritizeStreamingDownloads(activeClient, event.data.fileId);
-      }
       if (event.data?.type === 'STREAM_CANCEL_PARTS') {
         streamDebug('bridge', 'STREAM_CANCEL_PARTS', { fileId: event.data.fileId });
-        cancelTdlibFileDownloads(activeClient, event.data.fileId);
+        cancelMtprotoFilePartRequests(event.data.fileId);
       }
       if (event.data?.type === 'STREAM_DEBUG_RELAY') {
         streamDebug(`sw:${event.data.stage}`, event.data.msg, event.data.extra);

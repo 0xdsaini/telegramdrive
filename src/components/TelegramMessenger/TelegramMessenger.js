@@ -1,4 +1,6 @@
 import { TELEGRAM_API_ID, TELEGRAM_API_HASH } from './constants';
+import { createGramTelegramClient, clearGramSession } from '../../mtproto/gramTelegramClient';
+import { clearDocumentRegistry } from '../../mtproto/documentRegistry';
 import { createEmptyFileStructure, parseFileStructure, serializeFileStructure } from '../../utils/fileStructureUtils';
 
 import React, { useState, useEffect, useRef, useCallback, useContext } from 'react';
@@ -51,146 +53,53 @@ const TelegramMessenger = () => {
     return new File([blob], 'metadata.json', { type: 'application/json' });
   };
 
+  const messageLooksLikeMetadata = (messageResult) => {
+    if (!messageResult?.content) return false;
+    const text = messageResult.content?.text?.text;
+    const caption = messageResult.content?.caption?.text;
+    const fileName = messageResult.content?.document?.file_name;
+    return (
+      (text && text.includes('METADATA_STORAGE'))
+      || (caption && caption.includes('METADATA_STORAGE'))
+      || fileName === 'metadata.json'
+    );
+  };
+
   const downloadFileandExtractMetadata = async (messageId) => {
-
-    // TODO: Implement Method 1 and Method 2 too above here.
-    // and change this function to full responsibility of findMetadataMessage;
-
-    let foundMessage = null;
-    let foundId = null;
-    // Method 3: Fallback to getChatHistory if searchChatMessages fails
-    try {
-      console.log("Falling back to getChatHistory...");
-      let fromMessageId = 0;
-      const maxAttempts = 5; // NOTICE: Adjust this later if number of messages starts getting somewhat high(currently, per attempt=50 messages, 5 attempts = 50*5 = 250 messages it'll retrieve only. If your METADATA_STORAGE message is in the beginning of the chat, and you have more than 250 messages after that, you'll miss that METADATA_STORAGE message. If you expect a lot of messages, you SHOULD increase this limit. And this will definitely happen as you start storing files in it more and more and more.)
-      
-      for (let attempt = 0; attempt < maxAttempts && !foundMessage; attempt++) {
-        const historyResult = await clientRef.current.send({
-          "@type": "getChatHistory",
-          "chat_id": selectedChatId,
-          "from_message_id": fromMessageId,
-          "offset": 0,
-          "limit": 50, // Get 50 messages at a time
-          "only_local": false
-        });
-        
-        if (historyResult.messages && historyResult.messages.length > 0) {
-          // Update fromMessageId for next iteration if needed
-          fromMessageId = historyResult.messages[historyResult.messages.length - 1].id;
-          
-          // Search for METADATA_STORAGE in the messages (both in text and document captions)
-          foundMessage = historyResult.messages.find(msg => 
-            (msg.content && 
-             msg.content.document && 
-             msg.content.caption && 
-             msg.content.caption.text && 
-             msg.content.caption.text.includes("METADATA_STORAGE"))
-          );
-          
-          if (foundMessage) {
-            foundId = foundMessage.id;
-            console.log("Found METADATA_STORAGE message with getChatHistory, ID:", foundId);
-            // localStorage.setItem(MESSAGE_ID_KEY, foundId.toString());
-          }
-          
-          // If we got fewer messages than requested, we've reached the end
-          if (historyResult.messages.length < 50) {
-            break;
-          }
-        } else {
-          // No more messages to check
-          break;
-        }
-      }
-      
-      // // If we get here, we didn't find the message. --> We'll reach here anyway.
-      // console.log("No METADATA_STORAGE messages found with getChatHistory");
-    } catch (historyError) {
-      console.error('Error with getChatHistory:', historyError);
+    if (!messageId || !clientRef.current || !selectedChatId) {
+      throw new Error('Missing messageId or client for metadata download');
     }
 
-    setMessageId(foundMessage.id);
-
-    let message = foundMessage;
-    console.log("message", message);
-    
-    let fileId = message.content.document.document.id;
-    console.log("messageId", fileId);
-    
-    
-    // If cache version of this file exists, delete it
-    let deleteOldFile;
-    try {
-      deleteOldFile = await window.tdClient.send({
-        '@type': 'deleteFile',
-        'file_id': fileId
-      })
-      await new Promise(resolve => setTimeout(resolve, 3000)); // NOTICE: Pathetic coding here. We SHOULDN'T BE RELYING ON TIMEOUT AT ALL. They may work sometimes and sometimes won't work. It'll create terrible/unrealiable UX.
-      console.log('Old file deleted successfully', deleteOldFile);
-    } catch (error) {
-      console.error('Error deleting old file:', error);
-    }
-    
-    let downloadResult;
-    downloadResult = await window.tdClient.send({
-                '@type': 'downloadFile',
-                'file_id': fileId,
-                'priority': 32,
-                'offset': 0,
-                'limit': 0,
-                'synchronous': true // Use asynchronous download to avoid blocking UI
+    const message = await clientRef.current.send({
+      '@type': 'getMessage',
+      chat_id: selectedChatId,
+      message_id: messageId,
     });
 
-    console.log("downloadResult", downloadResult);
-
-    if (downloadResult.local && downloadResult.local.is_downloading_completed) {
-      console.log("downloading complete");
-    } else {
-      console.log("downloading not complete yet", downloadResult.local.is_downloading_completed);
+    const docFile = message?.content?.document?.document;
+    if (!docFile?.id) {
+      throw new Error('Metadata message has no attached document');
     }
 
-    let downloadComplete = false;
-    const checkDownloadProgress = async () => {
-      if (downloadResult.local && downloadResult.local.is_downloading_completed) {
-        console.log("downloading complete");
-        downloadComplete = true;
-        return;
-      }
-    }
+    const fileId = docFile.id;
+    const size = docFile.size || 0;
+    setMessageId(messageId);
 
-    while (!downloadComplete) {
-      await new Promise(resolve => setTimeout(resolve, 1000)); // NOTICE: Probably bad coding here. We SHOULDN'T BE RELYING ON TIMEOUT AT ALL.
-      await checkDownloadProgress();
-    }
-    console.log("while loop ended, downloadResult", downloadResult);
-
-    const part = await window.tdClient.send({
+    const part = await clientRef.current.send({
       '@type': 'readFilePart',
-      'file_id': fileId,
-      'offset': 0,
-      'count': 0
+      file_id: fileId,
+      offset: 0,
+      count: size > 0 ? size : 1024 * 1024,
     });
 
-    let text;
-    while(true){
-      if (part) {
-        text = await part.data.text();
-        // text = JSON.parse(text) // Probably we'll be needing this later.
-        console.log("File chunk:", text);
-      } else {
-        console.warn("No data or file not ready.");
-        await new Promise(resolve => setTimeout(resolve, 1000)); // NOTICE: Probably bad coding here. We SHOULDN'T BE RELYING ON TIMEOUT AT ALL.
-        continue;
-      }
-      console.log("text read from metadata json file", text);
-      break;
-    }
+    const text = part?.data
+      ? (typeof part.data === 'string' ? part.data : part.data.toString('utf8'))
+      : '';
 
-    console.log("inside downloadFileandExtractMetadata, typeof text: ", typeof text);
+  console.log('Metadata JSON loaded via MTProto, bytes:', text.length);
 
-    return {"text": text, "id": foundId};
-    // return text;
-  }
+    return { text, id: messageId };
+  };
 
   // Find message with METADATA_STORAGE prefix to enable message editing
   const findMessageId = useCallback(async () => {
@@ -214,26 +123,21 @@ const TelegramMessenger = () => {
             "message_id": parseInt(savedMessageId, 10)
           });
           
-          if (messageResult && 
-              messageResult.content && 
-              messageResult.content.text && 
-              messageResult.content.text.text && 
-              messageResult.content.text.text.includes("METADATA_STORAGE")) {
-            
+          if (messageResult && messageLooksLikeMetadata(messageResult)) {
             console.log("Verified saved message ID is valid:", savedMessageId);
-            setMessageId(parseInt(savedMessageId, 10));
-            setContextMessageId(parseInt(savedMessageId, 10));
-            
-            // Load file structure from message
+            const numericId = parseInt(savedMessageId, 10);
+            setMessageId(numericId);
+            setContextMessageId(numericId);
+
             try {
-              const parsedStructure = parseFileStructure(messageResult.content.text.text);
+              const result = await downloadFileandExtractMetadata(numericId);
+              const parsedStructure = parseFileStructure(result.text);
               console.log("Loaded file structure from saved message ID:", parsedStructure);
               setFileStructure(parsedStructure);
               setIsFileStructureLoaded(true);
-              return parseInt(savedMessageId, 10);
+              return numericId;
             } catch (parseError) {
               console.error("Error parsing file structure from saved message:", parseError);
-              // Continue to search methods if parsing fails
             }
           } else {
             console.log("Saved message ID is no longer valid, will search again");
@@ -268,7 +172,7 @@ const TelegramMessenger = () => {
           // Load file structure from message
           try {
             if (true) {
-              const result = await downloadFileandExtractMetadata(1234);
+              const result = await downloadFileandExtractMetadata(foundId);
               console.log("downloadFileandExtractMetadata(inside findMessageId->searchChatMessages)", result.text, typeof result.text);
               const parsedStructure = parseFileStructure(result.text);
               console.log("Loaded file structure:", parsedStructure);
@@ -314,12 +218,7 @@ const TelegramMessenger = () => {
             fromMessageId = historyResult.messages[historyResult.messages.length - 1].id;
             
             // Search for METADATA_STORAGE in the messages
-            foundMessage = historyResult.messages.find(msg => 
-              msg.content && 
-              msg.content.caption && 
-              msg.content.caption.text && 
-              msg.content.caption.text.includes("METADATA_STORAGE")
-            );
+            foundMessage = historyResult.messages.find((msg) => messageLooksLikeMetadata(msg));
             
             if (foundMessage) {
               const foundId = foundMessage.id;
@@ -331,7 +230,7 @@ const TelegramMessenger = () => {
               // Load file structure from message
               try {
                 if (true) {
-                  const result = await downloadFileandExtractMetadata(1234);
+                  const result = await downloadFileandExtractMetadata(foundId);
                   console.log("downloadFileandExtractMetadata(inside findMessageId->getChatHistory)", result.text, typeof result.text);
                   const parsedStructure = parseFileStructure(result.text);
                   console.log("Loaded file structure:", parsedStructure);
@@ -377,15 +276,10 @@ const TelegramMessenger = () => {
     }
   }, [selectedChatId]);
 
-  // Initialize TDLib
+  // Initialize MTProto (GramJS) — Web A style transport
   useEffect(() => {
-    // Check if TDLib is available
-    if (!window.tdweb || !window.tdweb.default) {
-      setStatus('Error: TDLib not found. Please check if tdweb.js is properly loaded.');
-      return;
-    }
+    let cancelled = false;
 
-    // Initialize data after successful authentication
     const initializeData = async () => {
       if (!clientRef.current) return;
       
@@ -413,10 +307,6 @@ const TelegramMessenger = () => {
               
               // If getting a specific chat fails, try to get all chats
               // Add a delay to ensure authorization is complete
-              console.log("Adding delay before getChats...");
-              await new Promise(resolve => setTimeout(resolve, 5000));
-              console.log("Delay finished, now trying getChats");
-              
               try {
                 const chatData = await clientRef.current.send({
                   "@type": "getChats",
@@ -443,186 +333,56 @@ const TelegramMessenger = () => {
       }
     };
 
-    const initTelegram = async () => {
+    const initGram = async () => {
       try {
-        console.log("Starting TDLib initialization...");
-        setStatus('Initializing TDLib...');
+        setStatus('Connecting (MTProto / GramJS)...');
+        const client = await createGramTelegramClient();
+        if (cancelled) return;
 
-        // Create TDLib client
-        const TdClient = window.tdweb.default;
-        const client = new TdClient({
-          logVerbosityLevel: 2, // Increased for more detailed logs
-          jsLogVerbosityLevel: 'debug', // Changed to debug for more detailed logs
-          mode: 'wasm',
-          api_id: TELEGRAM_API_ID,
-          api_hash: TELEGRAM_API_HASH,
-        });
-        
         clientRef.current = client;
         setTelegramClient(client);
         window.tdClient = client;
-        console.log("TDLib client created");
-        
-        // Set up event handling before setting parameters
-        client.onUpdate = update => {
-          // Safely check if update exists and has a type
+
+        client.onUpdate = (update) => {
           if (!update || typeof update !== 'object') return;
-          
-          try {
-            
-            // Only log specific update types we're interested in
-            const allowedUpdates = [
-              'updateFile', // This is not compulsory. You can disable if you want.
-              'updateAuthorizationState', // These are COMPULSORY. Authentication process below depends on flow being passed to there.
-              'updateMessageSendSucceeded' // These are COMPULSORY. Authentication process below depends on flow being passed to there.
-            ];
-            if (!allowedUpdates.includes(update["@type"])) {
-              return; // CAUTION: this can skip not just logging, but authorization happening below
-            }
-              // console.log("TDLib update received:", update);
-            
-            // Handle message send success events
-            if (update['@type'] === 'updateMessageSendSucceeded') {
-              console.log('Message sent successfully:', update.message);
-              if (update.message.content?.text?.text?.includes("METADATA_STORAGE")) {
-                console.log("METADATA_STORAGE message id:", update.message.id);
-                setMessageId(update.message.id);
-              }
-            }
-            
-            // Handle authorization state changes
-            if (update['@type'] === 'updateAuthorizationState' && update.authorization_state) {
-              const currentAuthState = update.authorization_state['@type'];
-              console.log('Auth state changed to:', currentAuthState);
-              
-              switch (currentAuthState) {
-                case 'authorizationStateWaitTdlibParameters':
-                  console.log("Waiting for TDLib parameters...");
-                  setStatus('Setting up TDLib parameters...');
-                  setAuthState('initial');
-                  
-                  // Send TDLib parameters immediately when we receive this state
-                  setTimeout(async () => {
-                    try {
-                      console.log("Sending TDLib parameters...");
-                      await client.send({
-                        "@type": "setTdlibParameters",
-                        "use_test_dc": false,
-                        "database_directory": "/tdlib/dbfs",
-                        "files_directory": "/tdlib/inboundfs",
-                        "use_file_database": false,  // Prevents storing files
-                        "use_chat_info_database": true,
-                        "use_message_database": true,
-                        "use_secret_chats": false,
-                        "api_id": TELEGRAM_API_ID,
-                        "api_hash": TELEGRAM_API_HASH,
-                        "system_language_code": "en",
-                        "device_model": "Web",
-                        "system_version": "TDLib",
-                        "application_version": "1.0",
-                        "enable_storage_optimizer": true,
-                        "ignore_file_names": false,
-                        "is_background": false
-                      });
-                      console.log("TDLib parameters sent successfully");
-                    } catch (paramError) {
-                      console.error("Error setting TDLib parameters:", paramError);
-                      setStatus(`Error: ${paramError.message || 'Failed to set TDLib parameters'}`);
-                    }
-                  }, 100);
-                  break;
-                  
-                case 'authorizationStateWaitEncryptionKey':
-                  console.log("Waiting for encryption key...");
-                  setStatus('Setting up encryption...');
-                  
-                  // Send empty encryption key
-                  setTimeout(async () => {
-                    try {
-                      console.log("Sending empty encryption key...");
-                      await client.send({
-                        "@type": "checkDatabaseEncryptionKey",
-                        "encryption_key": ""
-                      });
-                      console.log("Encryption key sent successfully");
-                    } catch (encryptionError) {
-                      console.error("Error setting encryption key:", encryptionError);
-                      setStatus(`Error: ${encryptionError.message || 'Failed to set encryption key'}`);
-                    }
-                  }, 100);
-                  break;
-                  
-                case 'authorizationStateWaitPhoneNumber':
-                  console.log("Ready for phone number input");
-                  setStatus('Please enter your phone number');
-                  setAuthState('waitPhoneNumber');
-                  break;
-                  
-                case 'authorizationStateWaitCode':
-                  console.log("Ready for verification code input");
-                  setStatus('Please enter the verification code');
-                  setAuthState('waitCode');
-                  break;
-                  
-                case 'authorizationStateReady':
-                  console.log("Authorization completed successfully");
-                  setStatus('Connected to Telegram');
-                  setIsConnected(true);
-                  setContextIsConnected(true);
-                  setAuthState('ready');
-                  
-                  // Initialize data and find message ID after a short delay
-                  // TODO: We need to remove all the timeout things, rather find
-                  // better solutions to chaining these things in deterministic fashion.
-                  setTimeout(() => {
-                    initializeData();
-                    findMessageId();
-                  }, 1000);
-                  break;
-                  
-                case 'authorizationStateClosed':
-                  console.log("Connection closed");
-                  setStatus('Connection closed');
-                  setIsConnected(false);
-                  setAuthState('initial');
-                  break;
-                  
-                default:
-                  console.log("Unhandled auth state:", currentAuthState);
-                  break;
-              }
-            } else if (update['@type'] === 'error') {
-              console.error('TDLib error:', update);
-              setStatus(`Error: ${update.message || 'Unknown error'}`);
-            }
-          } catch (err) {
-            console.error('Error handling TDLib update:', err);
+          if (update['@type'] !== 'updateAuthorizationState') return;
+          const state = update.authorization_state?.['@type'];
+          if (state === 'authorizationStateReady') {
+            setStatus('Connected to Telegram');
+            setIsConnected(true);
+            setContextIsConnected(true);
+            setAuthState('ready');
+            initializeData();
+            findMessageId();
           }
         };
-        
-        console.log("Event handler set up, proceeding with initialization...");
-        setStatus('Connecting to Telegram...');
 
+        if (client._gram && (await client._gram.checkAuthorization())) {
+          setStatus('Connected to Telegram');
+          setIsConnected(true);
+          setContextIsConnected(true);
+          setAuthState('ready');
+          await initializeData();
+          findMessageId();
+        } else {
+          setStatus('Please sign in');
+          setAuthState('waitPhoneNumber');
+        }
       } catch (error) {
-        console.error('TDLib initialization error:', error);
-        setStatus(`Error: ${error.message || 'Failed to initialize TDLib'}`);
+        console.error('GramJS init error:', error);
+        setStatus(`Error: ${error.message || 'Failed to initialize MTProto client'}`);
       }
     };
-    
-    // // Initialize Telegram with a small delay to ensure the script is loaded
-    // console.log("Setting timeout for TDLib initialization...");
-    // const timeoutId = setTimeout(initTelegram, 1000);
-    initTelegram(); // NOTICE: We changed this in this to run without timeout, if anything errorneous happens, you may need to set it back to timeout again
 
-    // Cleanup function
+    initGram();
+
     return () => {
-      console.log("Cleaning up TDLib resources...");
-      // clearTimeout(timeoutId); // NOTICE: this was commented along with above initTelegram's moving from timeout to normal initTelegram. If you want to use timeout, you may need to set it back to clearTimeout again. I don't really know what it does, but it's there.
-      if (clientRef.current) {
-        clientRef.current.close();
+      cancelled = true;
+      if (clientRef.current?._gram) {
+        clientRef.current._gram.disconnect().catch(() => {});
       }
     };
-  }, []); // NOTICE: we're removing this here in this commit, later if something breaks, you may need to re-set it to this. Currently, I don't think this was placed rightly.
+  }, []);
 
 
   const handleMessageChange = (e) => {

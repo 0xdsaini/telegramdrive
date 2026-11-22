@@ -1,8 +1,8 @@
 import { streamDebug, streamDebugError } from './streamDebug';
-import { deriveVideoFileNameFromMessage } from './untrackedChatMedia';
+import { messageMatchesFileName } from '../mtproto/messageContentShape';
 
 /**
- * Resolve a stored metadata file entry to TDLib file id + size.
+ * Resolve a stored metadata file entry to MTProto synthetic file id + size.
  */
 export async function resolveTelegramFile(telegramClient, chatId, fileName, messageId) {
   streamDebug('resolve', 'start', { chatId, fileName, messageId });
@@ -14,6 +14,14 @@ export async function resolveTelegramFile(telegramClient, chatId, fileName, mess
       chat_id: chatId,
       message_id: messageId,
     });
+    if (message && !messageMatchesFileName(message, fileName)) {
+      streamDebug('resolve', 'getMessage id mismatch — will search by filename', {
+        messageId,
+        gotMessageId: message.id,
+        fileName,
+      });
+      message = null;
+    }
   } catch {
     message = null;
   }
@@ -23,39 +31,21 @@ export async function resolveTelegramFile(telegramClient, chatId, fileName, mess
       '@type': 'searchChatMessages',
       chat_id: chatId,
       query: fileName,
-      limit: 10,
+      limit: 50,
       from_message_id: 0,
       offset: 0,
       only_missed: false,
     });
 
     if (searchResult?.messages?.length) {
-      for (const msg of searchResult.messages) {
-        const doc = msg.content?.document;
-        if (
-          msg.content?.['@type'] === 'messageDocument' &&
-          doc &&
-          (doc.file_name === fileName || doc.document)
-        ) {
-          message = msg;
-          break;
-        }
-        if (msg.content?.['@type'] === 'messageVideo') {
-          const video = msg.content.video;
-          const captionDerived = deriveVideoFileNameFromMessage(msg);
-          if (
-            video?.file_name === fileName
-            || captionDerived === fileName
-            || msg.id === messageId
-          ) {
-            message = msg;
-            break;
-          }
-        }
-        if (msg.content?.['@type'] === 'messageAudio') {
-          message = msg;
-          break;
-        }
+      const exact = searchResult.messages.find((msg) => messageMatchesFileName(msg, fileName));
+      if (exact) {
+        streamDebug('resolve', 'search hit by exact filename', {
+          fileName,
+          messageId: exact.id,
+          metadataMessageId: messageId,
+        });
+        message = exact;
       }
     }
   }
@@ -67,7 +57,7 @@ export async function resolveTelegramFile(telegramClient, chatId, fileName, mess
   const content = message.content;
   let fileId = null;
   let size = 0;
-  let resolvedMessageId = message.id;
+  const resolvedMessageId = message.id;
 
   if (content['@type'] === 'messageDocument') {
     const doc = content.document;
@@ -110,8 +100,14 @@ export async function resolveTelegramFile(telegramClient, chatId, fileName, mess
     fileId,
     size,
     messageId: resolvedMessageId,
+    metadataMessageId: messageId,
     message,
   };
-  streamDebug('resolve', 'done', { fileId: out.fileId, size: out.size, messageId: out.messageId });
+  streamDebug('resolve', 'done', {
+    fileId: out.fileId,
+    size: out.size,
+    messageId: out.messageId,
+    metadataMessageId: out.metadataMessageId,
+  });
   return out;
 }

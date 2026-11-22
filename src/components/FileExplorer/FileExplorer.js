@@ -789,9 +789,7 @@ const FileExplorer = () => {
       }
 
       setError(null);
-      setSuccess(`Activating stream worker for ${fileName}...`);
-      await prepareForStreaming(telegramClient);
-      setSuccess(`Opening stream for ${fileName}...`);
+      setSuccess(null);
 
       const resolved = await resolveTelegramFile(
         telegramClient,
@@ -806,11 +804,12 @@ const FileExplorer = () => {
         size: resolved.size,
         mimeType: mimeTypeFromFileName(fileName),
         fileName,
+        messageId: resolved.messageId,
+        chatId: selectedChatId,
       });
       streamDebug('play', 'stream URL built', { streamUrl, mime: mimeTypeFromFileName(fileName) });
 
       setStreamPlayer({ open: true, url: streamUrl, title: fileName });
-      setSuccess(null);
     } catch (playError) {
       streamDebugError('play', 'handleStreamPlay failed', playError);
       setError(playError.message || 'Failed to start streaming playback.');

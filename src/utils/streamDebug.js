@@ -49,18 +49,57 @@ export function streamDebugError(stage, message, error) {
   push(`[${stage}] ERROR: ${message} | ${detail}`);
 }
 
-/** Call from console: copyStreamDebugLogs() */
+function getStreamDebugLogText() {
+  return (window.__STREAM_DEBUG_LOGS || [])
+    .map((e) => `${e.t} ${e.line}`)
+    .join('\n');
+}
+
+/** Fallback when Clipboard API rejects (DevTools focused, no user gesture, etc.). */
+function copyTextLegacy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.left = '-9999px';
+  document.body.appendChild(ta);
+  ta.select();
+  try {
+    return document.execCommand('copy');
+  } finally {
+    document.body.removeChild(ta);
+  }
+}
+
+/**
+ * Call from console: copyStreamDebugLogs()
+ * Always logs to console; copies when possible. Returns the log text.
+ */
 export function installStreamDebugHelpers() {
   if (typeof window === 'undefined') return;
-  window.copyStreamDebugLogs = () => {
-    const text = (window.__STREAM_DEBUG_LOGS || [])
-      .map((e) => `${e.t} ${e.line}`)
-      .join('\n');
-    if (navigator.clipboard?.writeText) {
-      return navigator.clipboard.writeText(text);
+  window.copyStreamDebugLogs = async () => {
+    const text = getStreamDebugLogText();
+    const lineCount = (window.__STREAM_DEBUG_LOGS || []).length;
+    console.log(`[STREAM_DEBUG] ${lineCount} lines (full log below):\n`, text);
+    try {
+      if (document.hasFocus() && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        console.log('[STREAM_DEBUG] Copied to clipboard.');
+        return text;
+      }
+    } catch (err) {
+      streamDebug('init', 'clipboard.writeText failed, trying legacy copy', {
+        message: err?.message,
+      });
     }
-    console.log(text);
-    return Promise.resolve();
+    if (copyTextLegacy(text)) {
+      console.log('[STREAM_DEBUG] Copied via legacy execCommand.');
+      return text;
+    }
+    console.warn(
+      '[STREAM_DEBUG] Could not copy (click the page, then run copyStreamDebugLogs again). Log printed above.'
+    );
+    return text;
   };
   window.dumpStreamDebugLogs = () => {
     console.table(window.__STREAM_DEBUG_LOGS || []);
@@ -71,8 +110,9 @@ export function installStreamDebugHelpers() {
     sessionStorage.removeItem('stream-sw-reload-attempted');
     window.location.reload();
   };
+  window.getStreamDebugLogText = getStreamDebugLogText;
   streamDebug(
     'init',
-    'Helpers: copyStreamDebugLogs(), dumpStreamDebugLogs(), resetStreamServiceWorker()'
+    'Helpers: copyStreamDebugLogs(), getStreamDebugLogText(), dumpStreamDebugLogs(), resetStreamServiceWorker()'
   );
 }

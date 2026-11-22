@@ -1,0 +1,17 @@
+
+telegram K's api key (uses webogram's api key and hash)
+api id:
+2496
+
+api hash:
+8da85b0d5bfe62527e5b244c209159c3
+
+--------
+another api key(we're using currently):
+api id
+2899
+
+api_hash
+36722c72256a24c1225de00eb6a1ca74
+
+

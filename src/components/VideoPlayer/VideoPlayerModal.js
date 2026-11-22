@@ -9,7 +9,7 @@ import {
   FaCompress,
   FaCog,
 } from 'react-icons/fa';
-import { toggleStreamInUse } from '../../utils/streamBridge';
+import { toggleStreamInUse, isStreamingReadyForPlayback } from '../../utils/streamBridge';
 import { isStreamUrl } from '../../utils/streamUrl';
 import { streamDebug, streamDebugError } from '../../utils/streamDebug';
 import './VideoPlayerModal.css';
@@ -339,12 +339,20 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
 
     (async () => {
       try {
+        const canPlayImmediately = isStreamingReadyForPlayback() && isStreamUrl(streamUrl);
+        if (canPlayImmediately) {
+          streamDebug('video', 'fast path: SW ready — setSrc before prepare');
+          setSrc(streamUrl);
+          bumpControlsVisible();
+        }
         if (preparePlaybackRef.current) {
           await preparePlaybackRef.current();
         }
         if (cancelled) return;
-        setSrc(streamUrl);
-        bumpControlsVisible();
+        if (!canPlayImmediately) {
+          setSrc(streamUrl);
+          bumpControlsVisible();
+        }
       } catch (prepareError) {
         streamDebugError('video', 'preparePlayback failed', prepareError);
         setLastVideoError(prepareError?.message || 'Could not start streaming playback.');

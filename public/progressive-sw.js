@@ -4,7 +4,7 @@
  * File bytes are fetched from the page via TDLib (downloadFile + readFilePart).
  * STREAM_SW_REV=6 — TDLib: sequential 1 MiB parts (no single 2 MiB downloadFile).
  */
-const STREAM_SW_REV = 7;
+const STREAM_SW_REV = 11;
 
 const STREAM_CHUNK_MIDDLE_LIMIT = 512 * 1024;
 const STREAM_CHUNK_UPPER_LIMIT = 1024 * 1024;
@@ -119,6 +119,8 @@ async function requestFilePartFromPage(info, alignedOffset, limit, fromPreload =
     size: info.size,
     offset: alignedOffset,
     limit,
+    messageId: info.messageId,
+    chatId: info.chatId,
     fromPreload: !!fromPreload,
     priority: fromPreload ? 'preload' : 'foreground',
   };
@@ -174,8 +176,16 @@ class Stream {
     this.info = info;
     this.preferredClientId = preferredClientId || null;
     this.id = getStreamId(info);
-    this.limitPart =
-      info.size > 75 * 1024 * 1024 ? STREAM_CHUNK_UPPER_LIMIT : STREAM_CHUNK_MIDDLE_LIMIT;
+    const tdlib = info.backend === 'tdlib';
+    // GramJS / Web A: upload.GetFile max 512 KiB per request (telegram-tt DEFAULT_PART_SIZE).
+    const mtproto = info.backend === 'mtproto';
+    this.limitPart = tdlib
+      ? STREAM_CHUNK_MIDDLE_LIMIT
+      : mtproto
+        ? STREAM_CHUNK_MIDDLE_LIMIT
+        : info.size > 75 * 1024 * 1024
+          ? STREAM_CHUNK_UPPER_LIMIT
+          : STREAM_CHUNK_MIDDLE_LIMIT;
     this.loadedOffsets = new Set();
     this.inUse = 0;
     this.destroyTimer = null;
@@ -223,6 +233,7 @@ class Stream {
     const key = this.getChunkKey(alignedOffset, limit);
     const match = await cache.match(this.cacheRequestForKey(key));
     if (!match) return null;
+    swDebug('cache', 'HIT', { fileId: this.info.fileId, alignedOffset, limit });
     return new Uint8Array(await match.arrayBuffer());
   }
 
@@ -355,7 +366,7 @@ class Stream {
     });
 
     let ab;
-    if (this.usesTdlib() && needsSecondChunk) {
+    if (needsSecondChunk) {
       const p1 = await this.requestFilePart(alignedOffset, limit);
       const p2 = await this.requestFilePart(alignedOffset + limit, limit);
       ab = bufferConcats(p1, p2);

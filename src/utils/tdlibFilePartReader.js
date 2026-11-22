@@ -1,20 +1,39 @@
 import { bytesFromReadFilePart } from './readFilePartBytes';
 import { streamDebug, streamDebugError } from './streamDebug';
 
-const POLL_MS = 200;
-const MIN_WAIT_MS = 90_000;
+const POLL_MS = 120;
+const MIN_WAIT_MS = 20_000;
 const MAX_WAIT_MS = 300_000;
 const PRIORITY_PLAYBACK = 32;
 const PRIORITY_PRELOAD = 8;
 /** tdweb/TDLib fetches in 512 KiB steps — do not pass larger limits to downloadFile. */
 const TDLIB_PART_BYTES = 512 * 1024;
+/** Minimum contiguous bytes before we stream a partial response to the video element. */
+const MIN_PARTIAL_PLAYBACK_BYTES = 128 * 1024;
 
 const inFlightParts = new Map();
 /** TDLib allows only one active downloadFile per file — serialize all work by fileId. */
 const fileDownloadChains = new Map();
+/** Bumped when playback for a file is cancelled (modal closed, new seek, etc.). */
+const cancelGeneration = new Map();
 
 function waitMsForByteCount(count) {
-  return Math.min(MAX_WAIT_MS, Math.max(MIN_WAIT_MS, (count / (1024 * 1024)) * 45_000));
+  const scaled = Math.ceil(count / TDLIB_PART_BYTES) * 35_000;
+  return Math.min(MAX_WAIT_MS, Math.max(MIN_WAIT_MS, scaled));
+}
+
+function getCancelGeneration(fileId) {
+  return cancelGeneration.get(fileId) ?? 0;
+}
+
+function bumpCancelGeneration(fileId) {
+  const next = getCancelGeneration(fileId) + 1;
+  cancelGeneration.set(fileId, next);
+  return next;
+}
+
+function isPlaybackCancelled(fileId, atGeneration) {
+  return getCancelGeneration(fileId) !== atGeneration;
 }
 
 function tdlibErrorMessage(error) {
@@ -70,23 +89,68 @@ async function getDownloadedPrefixSize(client, fileId, offset) {
   return size;
 }
 
+async function cancelActiveDownload(client, fileId) {
+  try {
+    await client.send({
+      '@type': 'cancelDownloadFile',
+      file_id: fileId,
+      only_if_pending: false,
+    });
+    streamDebug('tdlib', 'cancelDownloadFile (force)', { fileId });
+  } catch (error) {
+    streamDebugError('tdlib', 'cancelDownloadFile failed', error);
+  }
+}
+
+/**
+ * When TDLib stalls mid-chunk, overlapping async downloadFile calls cancel each other.
+ * Cancel the active job and finish the gap with one synchronous downloadFile.
+ */
+async function recoverStalledDownload(client, fileId, offset, prefix, neededSize, priority) {
+  const gap = neededSize - prefix;
+  if (gap <= 0) return prefix;
+  const chunk = Math.min(gap, TDLIB_PART_BYTES);
+  streamDebug('tdlib', 'recoverStalledDownload', { fileId, offset, prefix, neededSize, chunk });
+  await cancelActiveDownload(client, fileId);
+  await new Promise((r) => setTimeout(r, 80));
+  await requestRangeDownload(client, fileId, offset + prefix, chunk, {
+    synchronous: true,
+    priority,
+  });
+  return getDownloadedPrefixSize(client, fileId, offset);
+}
+
 async function waitForContiguousBytes(
   client,
   fileId,
   offset,
   neededSize,
-  { priority = PRIORITY_PLAYBACK, allowNudge = true } = {}
+  {
+    priority = PRIORITY_PLAYBACK,
+    cancelGen = getCancelGeneration(fileId),
+    allowPartial = false,
+  } = {}
 ) {
   const deadline = Date.now() + waitMsForByteCount(neededSize);
   let polls = 0;
   let lastPrefix = -1;
   let stallTicks = 0;
+  let recoveries = 0;
 
   while (Date.now() < deadline) {
+    if (isPlaybackCancelled(fileId, cancelGen)) {
+      throw new Error('Download cancelled');
+    }
+
     polls += 1;
     const prefix = await getDownloadedPrefixSize(client, fileId, offset);
     if (prefix >= neededSize) {
       streamDebug('tdlib', 'waitForContiguousBytes OK', { fileId, offset, neededSize, prefix, polls });
+      return prefix;
+    }
+
+    if (allowPartial && prefix >= MIN_PARTIAL_PLAYBACK_BYTES && stallTicks >= 6) {
+      streamDebug('tdlib', 'waitForContiguousBytes partial OK', { fileId, prefix, neededSize, polls });
       return prefix;
     }
 
@@ -103,14 +167,14 @@ async function waitForContiguousBytes(
 
     if (prefix === lastPrefix) {
       stallTicks += 1;
-      if (allowNudge && stallTicks >= 8 && file?.local?.is_downloading_active) {
-        const chunk = Math.min(neededSize - prefix, TDLIB_PART_BYTES);
-        if (chunk > 0) {
-          streamDebug('tdlib', 'stall nudge downloadFile', { fileId, offset, prefix, neededSize, chunk });
-          await requestRangeDownload(client, fileId, offset + prefix, chunk, {
-            synchronous: false,
-            priority,
-          });
+      // Do not stack async downloadFile while one is active — TDLib cancels the previous.
+      if (stallTicks >= 10 && recoveries < 5) {
+        recoveries += 1;
+        const after = await recoverStalledDownload(client, fileId, offset, prefix, neededSize, priority);
+        if (after > prefix) {
+          stallTicks = 0;
+          lastPrefix = after;
+          continue;
         }
         stallTicks = 0;
       }
@@ -126,6 +190,8 @@ async function waitForContiguousBytes(
         neededSize,
         downloading: file?.local?.is_downloading_active,
         downloaded: file?.local?.downloaded_size,
+        stallTicks,
+        recoveries,
       });
     }
 
@@ -167,14 +233,24 @@ async function requestRangeDownload(client, fileId, offset, count, options = {})
   throw toError(lastError);
 }
 
-async function ensureRangeDownloaded(client, fileId, offset, count, { priority = PRIORITY_PLAYBACK } = {}) {
+async function ensureRangeDownloaded(
+  client,
+  fileId,
+  offset,
+  count,
+  { priority = PRIORITY_PLAYBACK, cancelGen = getCancelGeneration(fileId), allowPartial = false } = {}
+) {
   let prefix = await getDownloadedPrefixSize(client, fileId, offset);
   if (prefix >= count) {
     streamDebug('tdlib', 'range already local', { fileId, offset, count, existing: prefix });
-    return;
+    return prefix;
   }
 
   while (prefix < count) {
+    if (isPlaybackCancelled(fileId, cancelGen)) {
+      throw new Error('Download cancelled');
+    }
+
     const remaining = count - prefix;
     const partLimit = Math.min(remaining, TDLIB_PART_BYTES);
     streamDebug('tdlib', 'ensureRangeDownloaded step', {
@@ -189,23 +265,32 @@ async function ensureRangeDownloaded(client, fileId, offset, count, { priority =
       synchronous: false,
       priority,
     });
-    await waitForContiguousBytes(client, fileId, offset, prefix + partLimit, {
-      priority,
-      allowNudge: true,
-    });
+
+    try {
+      await waitForContiguousBytes(client, fileId, offset, prefix + partLimit, {
+        priority,
+        cancelGen,
+        allowPartial: allowPartial && offset === 0,
+      });
+    } catch (error) {
+      if (allowPartial && offset === 0) {
+        const partial = await getDownloadedPrefixSize(client, fileId, offset);
+        if (partial >= MIN_PARTIAL_PLAYBACK_BYTES) {
+          streamDebug('tdlib', 'ensureRangeDownloaded partial accept', { partial, count });
+          return partial;
+        }
+      }
+      throw error;
+    }
 
     const next = await getDownloadedPrefixSize(client, fileId, offset);
     if (next <= prefix) {
-      await requestRangeDownload(client, fileId, offset + prefix, partLimit, {
-        synchronous: true,
-        priority,
-      });
-      await waitForContiguousBytes(client, fileId, offset, prefix + partLimit, {
-        priority,
-        allowNudge: false,
-      });
+      await recoverStalledDownload(client, fileId, offset, prefix, prefix + partLimit, priority);
       const afterSync = await getDownloadedPrefixSize(client, fileId, offset);
       if (afterSync <= prefix) {
+        if (allowPartial && offset === 0 && prefix >= MIN_PARTIAL_PLAYBACK_BYTES) {
+          return prefix;
+        }
         throw new Error(`Download stalled at ${prefix} (need ${count} from offset ${offset})`);
       }
       prefix = afterSync;
@@ -213,6 +298,7 @@ async function ensureRangeDownloaded(client, fileId, offset, count, { priority =
       prefix = next;
     }
   }
+  return prefix;
 }
 
 async function readFilePartOnce(client, fileId, offset, count) {
@@ -249,23 +335,34 @@ async function readFilePartOnce(client, fileId, offset, count) {
   return bytes;
 }
 
-async function readFilePartWithRetry(client, fileId, offset, count, { priority = PRIORITY_PLAYBACK } = {}) {
+async function readFilePartWithRetry(client, fileId, offset, count, { priority = PRIORITY_PLAYBACK, cancelGen } = {}) {
   let lastError;
   for (let attempt = 1; attempt <= 4; attempt++) {
     try {
       await client.send({ '@type': 'getFile', file_id: fileId });
       if (attempt > 1) {
-        await ensureRangeDownloaded(client, fileId, offset, count, { priority });
+        await ensureRangeDownloaded(client, fileId, offset, count, {
+          priority,
+          cancelGen,
+          allowPartial: priority === PRIORITY_PLAYBACK,
+        });
       }
       return await readFilePartOnce(client, fileId, offset, count);
     } catch (error) {
       lastError = error;
       const msg = tdlibErrorMessage(error);
       streamDebugError('tdlib', `readFilePart attempt ${attempt} failed`, error);
-      if (!/not loaded|not loaded yet|canceled|cancelled/i.test(msg) && attempt >= 2) {
+      if (/cancelled|canceled/i.test(msg)) {
         throw toError(error);
       }
-      await ensureRangeDownloaded(client, fileId, offset, count, { priority });
+      if (!/not loaded|not loaded yet/i.test(msg) && attempt >= 2) {
+        throw toError(error);
+      }
+      await ensureRangeDownloaded(client, fileId, offset, count, {
+        priority,
+        cancelGen,
+        allowPartial: priority === PRIORITY_PLAYBACK,
+      });
     }
   }
   throw toError(lastError);
@@ -274,6 +371,7 @@ async function readFilePartWithRetry(client, fileId, offset, count, { priority =
 async function fetchFilePartLocked(client, fileId, fileSize, offset, limit, priority) {
   const safeEnd = Math.min(offset + limit, fileSize || offset + limit);
   const count = safeEnd - offset;
+  const cancelGen = getCancelGeneration(fileId);
   streamDebug('tdlib', 'requestTdlibFilePart begin', {
     fileId,
     fileSize,
@@ -281,18 +379,34 @@ async function fetchFilePartLocked(client, fileId, fileSize, offset, limit, prio
     limit,
     count,
     priority,
+    cancelGen,
   });
 
   if (count <= 0) {
     return new Uint8Array(0);
   }
 
+  const prefix = await getDownloadedPrefixSize(client, fileId, offset);
+  const readCached = async () => {
+    const bytes = await readFilePartWithRetry(client, fileId, offset, count, { priority, cancelGen });
+    streamDebug('tdlib', 'requestTdlibFilePart done', { byteLength: bytes.byteLength, priority, cached: true });
+    return bytes;
+  };
+
+  if (prefix >= count) {
+    return readCached();
+  }
+
   return runWithFileDownloadLock(fileId, async () => {
-    const prefix = await getDownloadedPrefixSize(client, fileId, offset);
-    if (prefix < count) {
-      await ensureRangeDownloaded(client, fileId, offset, count, { priority });
+    const freshPrefix = await getDownloadedPrefixSize(client, fileId, offset);
+    if (freshPrefix < count) {
+      await ensureRangeDownloaded(client, fileId, offset, count, {
+        priority,
+        cancelGen,
+        allowPartial: priority === PRIORITY_PLAYBACK,
+      });
     }
-    const bytes = await readFilePartWithRetry(client, fileId, offset, count, { priority });
+    const bytes = await readFilePartWithRetry(client, fileId, offset, count, { priority, cancelGen });
     streamDebug('tdlib', 'requestTdlibFilePart done', { byteLength: bytes.byteLength, priority });
     return bytes;
   });
@@ -350,6 +464,7 @@ export function prioritizeStreamingDownloads(client, fileId) {
 
 export function cancelTdlibFilePartRequests(fileId) {
   streamDebug('tdlib', 'cancelTdlibFilePartRequests', { fileId });
+  bumpCancelGeneration(fileId);
   for (const key of inFlightParts.keys()) {
     if (key.startsWith(`${fileId}:`)) {
       inFlightParts.delete(key);
