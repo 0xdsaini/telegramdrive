@@ -89,6 +89,21 @@ const FileGridItem = ({
         </button>
         {menuOpen && (
           <div className="file-card-menu-panel" role="menu">
+            {isStreamable ? (
+              <button
+                type="button"
+                role="menuitem"
+                className="file-card-menu-item"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMenuOpen(false);
+                  handlePlay(e);
+                }}
+              >
+                <FaPlay aria-hidden />
+                Play
+              </button>
+            ) : null}
             <button
               type="button"
               role="menuitem"

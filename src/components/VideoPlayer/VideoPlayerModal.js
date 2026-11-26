@@ -8,6 +8,7 @@ import {
   FaExpand,
   FaCompress,
   FaCog,
+  FaMusic,
 } from 'react-icons/fa';
 import { toggleStreamInUse } from '../../utils/streamBridge';
 import { isStreamUrl } from '../../utils/streamUrl';
@@ -77,7 +78,7 @@ function getBufferSegments(video) {
   return segments;
 }
 
-const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) => {
+const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, audioOnly = false }) => {
   const stageRef = useRef(null);
   const videoRef = useRef(null);
   const swipeDismissYRef = useRef(0);
@@ -260,8 +261,10 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
       setImmersiveMode(true);
     }
 
-    await lockLandscapeForPlayback();
-  }, []);
+    if (!audioOnly) {
+      await lockLandscapeForPlayback();
+    }
+  }, [audioOnly]);
 
   const resetSwipeDismiss = useCallback(() => {
     swipeDismissYRef.current = 0;
@@ -493,7 +496,9 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
     if (req) {
       try {
         await req();
-        await lockLandscapeForPlayback();
+        if (!audioOnly) {
+          await lockLandscapeForPlayback();
+        }
         bumpControlsVisible();
         return;
       } catch {
@@ -502,9 +507,11 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
     }
 
     setImmersiveMode(true);
-    await lockLandscapeForPlayback();
+    if (!audioOnly) {
+      await lockLandscapeForPlayback();
+    }
     bumpControlsVisible();
-  }, [bumpControlsVisible, immersiveMode]);
+  }, [audioOnly, bumpControlsVisible, immersiveMode]);
 
   const setRate = useCallback(
     (rate) => {
@@ -884,9 +891,9 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
         ref={stageRef}
         className={`yt-player-stage${isFullscreen ? ' yt-player-stage--fullscreen' : ''}${
           immersiveMode ? ' yt-player-stage--immersive' : ''
-        }${showControls ? ' yt-player-stage--controls-visible' : ''}${
-          swipeDismissDragging ? ' yt-player-stage--swipe-dismiss' : ''
-        }`}
+        }${audioOnly ? ' yt-player-stage--audio' : ''}${
+          showControls ? ' yt-player-stage--controls-visible' : ''
+        }${swipeDismissDragging ? ' yt-player-stage--swipe-dismiss' : ''}`}
         onClick={(e) => e.stopPropagation()}
         onMouseMove={bumpControlsVisible}
         onTouchStart={bumpControlsVisible}
@@ -903,7 +910,7 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
             : undefined
         }
       >
-        {IS_COARSE_POINTER && portraitViewport ? (
+        {!audioOnly && IS_COARSE_POINTER && portraitViewport ? (
           <div className="yt-player-rotate-hint" aria-live="polite">
             <span className="yt-player-rotate-hint__icon" aria-hidden>
               ↻
@@ -963,14 +970,26 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
         </button>
 
         <div
-          className="yt-player-video-wrap"
+          className={`yt-player-video-wrap${audioOnly ? ' yt-player-video-wrap--audio' : ''}`}
           onClick={handleVideoAreaClick}
           onTouchStart={handleVideoTouchStart}
           onTouchEnd={handleVideoTouchEnd}
           onDoubleClick={swallowVideoDoubleClick}
           role="presentation"
         >
-          <video ref={videoRef} className="yt-player-video" playsInline />
+          {audioOnly ? (
+            <div className="yt-player-audio-panel" aria-hidden={isPlaying}>
+              <FaMusic className="yt-player-audio-icon" />
+              <p className="yt-player-audio-title" title={title}>
+                {title}
+              </p>
+            </div>
+          ) : null}
+          <video
+            ref={videoRef}
+            className={`yt-player-video${audioOnly ? ' yt-player-video--audio' : ''}`}
+            playsInline
+          />
 
           {(isPreparing || isWaiting) && !lastVideoError ? (
             <div className="yt-player-spinner" aria-hidden />

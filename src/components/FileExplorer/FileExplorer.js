@@ -7,14 +7,21 @@ import React, {
   useCallback,
 } from 'react';
 import './FileExplorer.css';
-import { FaFile, FaFileImage, FaFileAlt, FaFileCode, FaFolder, FaTrash, FaArrowUp, FaPlus, FaUpload, FaHome, FaCheck } from 'react-icons/fa';
+import { FaFile, FaFileImage, FaFileAlt, FaFileCode, FaMusic, FaFolder, FaTrash, FaArrowUp, FaPlus, FaUpload, FaHome, FaCheck } from 'react-icons/fa';
 import FileGridItem from './FileGridItem';
 import FolderGridItem from './FolderGridItem';
 import VideoPlayerModal from '../VideoPlayer/VideoPlayerModal';
 import VideoPosterTile from './VideoPosterTile';
 import { resolveTelegramFile } from '../../utils/telegramFileResolver';
 import { getStreamUrl } from '../../utils/streamUrl';
-import { isStreamableMediaFileName, isVideoFileName, mimeTypeFromFileName } from '../../utils/mimeTypes';
+import {
+  isAudioFileName,
+  isAudioPlayback,
+  isStreamableMediaFileName,
+  isStreamableMimeType,
+  isVideoFileName,
+  mimeTypeFromTelegramContent,
+} from '../../utils/mimeTypes';
 import { generateVideoPosterJpeg } from '../../utils/generateVideoPosterJpeg';
 import { setCachedPoster } from '../../utils/thumbnailCache';
 import { streamDebug, streamDebugError } from '../../utils/streamDebug';
@@ -85,6 +92,10 @@ import {
 const getFileIcon = (filename) => {
   const extension = filename.split('.').pop().toLowerCase();
   
+  if (['mp3', 'm4a', 'ogg', 'opus', 'wav', 'flac', 'aac', 'wma', 'aiff', 'aif', 'mid', 'midi'].includes(extension)) {
+    return <FaMusic />;
+  }
+
   // Image files
   if (['jpg', 'jpeg', 'png', 'gif', 'svg', 'bmp', 'webp'].includes(extension)) {
     return <FaFileImage />;
@@ -112,7 +123,13 @@ const FileExplorer = () => {
   const [success, setSuccess] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
-  const [streamPlayer, setStreamPlayer] = useState({ open: false, url: '', title: '', fileId: null });
+  const [streamPlayer, setStreamPlayer] = useState({
+    open: false,
+    url: '',
+    title: '',
+    fileId: null,
+    audioOnly: false,
+  });
   const urlSuppressRef = useRef(false);
   const urlWriteModeRef = useRef('replace');
   const initialUrlAppliedRef = useRef(false);
@@ -261,7 +278,7 @@ const FileExplorer = () => {
         if (streamPlayer.fileId != null) {
           unregisterPlaybackFileId(streamPlayer.fileId);
         }
-        setStreamPlayer({ open: false, url: '', title: '', fileId: null });
+        setStreamPlayer({ open: false, url: '', title: '', fileId: null, audioOnly: false });
       }
     },
     [fileStructure, streamPlayer.fileId, streamPlayer.open],
@@ -556,7 +573,7 @@ const FileExplorer = () => {
       if (!prev.open) {
         return prev;
       }
-      return { open: false, url: '', title: '', fileId: null };
+      return { open: false, url: '', title: '', fileId: null, audioOnly: false };
     });
   }, []);
 
@@ -1117,7 +1134,6 @@ const FileExplorer = () => {
     async (fileName, e) => {
       e?.stopPropagation?.();
       captureExplorerScroll();
-      void lockLandscapeForPlayback();
       streamDebug('play', 'handleStreamPlay click', {
         fileName,
         swController: !!navigator.serviceWorker?.controller,
@@ -1146,11 +1162,6 @@ const FileExplorer = () => {
           return;
         }
 
-        if (!isStreamableMediaFileName(fileName)) {
-          setError(`This file type cannot be streamed: ${fileName}`);
-          return;
-        }
-
         urlWriteModeRef.current = 'push';
         setError(null);
         setStreamPlayer({
@@ -1158,6 +1169,7 @@ const FileExplorer = () => {
           url: '',
           title: fileName,
           fileId: null,
+          audioOnly: isAudioFileName(fileName),
         });
 
         const [resolved] = await Promise.all([
@@ -1194,13 +1206,27 @@ const FileExplorer = () => {
           });
         }
 
+        const mimeType = mimeTypeFromTelegramContent(resolved.message, fileName);
+        if (!isStreamableMimeType(mimeType)) {
+          setStreamPlayer({ open: false, url: '', title: '', fileId: null, audioOnly: false });
+          setError(`This file type cannot be streamed: ${fileName}`);
+          return;
+        }
+
+        const audioOnly = isAudioPlayback(fileName, resolved.message);
+        if (!audioOnly) {
+          void lockLandscapeForPlayback();
+        }
+
         const streamUrl = getStreamUrl({
           fileId: resolved.fileId,
           size: resolved.size,
-          mimeType: mimeTypeFromFileName(fileName),
+          mimeType,
           fileName,
+          messageId: resolved.messageId,
+          chatId: selectedChatId,
         });
-        streamDebug('play', 'stream URL built', { streamUrl, mime: mimeTypeFromFileName(fileName) });
+        streamDebug('play', 'stream URL built', { streamUrl, mime: mimeType });
 
         const headLimit = Math.min(
           resolved.size > 0 ? resolved.size : 1024 * 1024,
@@ -1225,11 +1251,12 @@ const FileExplorer = () => {
           url: streamUrl,
           title: fileName,
           fileId: resolved.fileId,
+          audioOnly,
         });
         setSuccess(null);
       } catch (playError) {
         streamDebugError('play', 'handleStreamPlay failed', playError);
-        setStreamPlayer({ open: false, url: '', title: '', fileId: null });
+        setStreamPlayer({ open: false, url: '', title: '', fileId: null, audioOnly: false });
         setError(playError.message || 'Failed to start streaming playback.');
       }
     },
@@ -1516,13 +1543,14 @@ const FileExplorer = () => {
         open={streamPlayer.open}
         title={streamPlayer.title}
         streamUrl={streamPlayer.url}
+        audioOnly={streamPlayer.audioOnly}
         preparePlayback={preparePlayback}
         onClose={() => {
           urlWriteModeRef.current = 'replace';
           if (streamPlayer.fileId != null) {
             unregisterPlaybackFileId(streamPlayer.fileId);
           }
-          setStreamPlayer({ open: false, url: '', title: '', fileId: null });
+          setStreamPlayer({ open: false, url: '', title: '', fileId: null, audioOnly: false });
         }}
       />
     </div>
