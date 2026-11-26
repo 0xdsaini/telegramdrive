@@ -1,16 +1,16 @@
 {
   "files": {
-    "main.css": "/telegramdrive/static/css/main.8a156343.css",
-    "main.js": "/telegramdrive/static/js/main.b9bacacd.js",
+    "main.css": "/telegramdrive/static/css/main.9a8d37eb.css",
+    "main.js": "/telegramdrive/static/js/main.dd5c824e.js",
     "static/js/453.b5a909b4.chunk.js": "/telegramdrive/static/js/453.b5a909b4.chunk.js",
     "index.html": "/telegramdrive/index.html",
     "static/media/GramSafeLogo.svg": "/telegramdrive/static/media/GramSafeLogo.ef515d79252a087ef623e9be95e97325.svg",
-    "main.8a156343.css.map": "/telegramdrive/static/css/main.8a156343.css.map",
-    "main.b9bacacd.js.map": "/telegramdrive/static/js/main.b9bacacd.js.map",
+    "main.9a8d37eb.css.map": "/telegramdrive/static/css/main.9a8d37eb.css.map",
+    "main.dd5c824e.js.map": "/telegramdrive/static/js/main.dd5c824e.js.map",
     "453.b5a909b4.chunk.js.map": "/telegramdrive/static/js/453.b5a909b4.chunk.js.map"
   },
   "entrypoints": [
-    "static/css/main.8a156343.css",
-    "static/js/main.b9bacacd.js"
+    "static/css/main.9a8d37eb.css",
+    "static/js/main.dd5c824e.js"
   ]
 }
