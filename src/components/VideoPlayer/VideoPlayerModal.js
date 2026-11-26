@@ -518,6 +518,21 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
     [bumpControlsVisible]
   );
 
+  const adjustPlaybackRate = useCallback(
+    (delta) => {
+      const video = videoRef.current;
+      if (!video) return;
+      const min = PLAYBACK_RATES[0];
+      const max = PLAYBACK_RATES[PLAYBACK_RATES.length - 1];
+      const next = Math.min(
+        max,
+        Math.max(min, Math.round((video.playbackRate + delta) * 4) / 4)
+      );
+      setRate(next);
+    },
+    [setRate]
+  );
+
   useEffect(() => {
     const onFs = () => setIsFullscreen(!!document.fullscreenElement || immersiveMode);
     document.addEventListener('fullscreenchange', onFs);
@@ -624,6 +639,30 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
           e.preventDefault();
           changeVolume(Math.max(0, (videoRef.current?.volume ?? volume) - 0.05));
           break;
+        case '<':
+          e.preventDefault();
+          adjustPlaybackRate(-0.25);
+          break;
+        case '>':
+          e.preventDefault();
+          adjustPlaybackRate(0.25);
+          break;
+        case '0':
+          e.preventDefault();
+          seekToFraction(0);
+          break;
+        case '1':
+        case '2':
+        case '3':
+        case '4':
+        case '5':
+        case '6':
+        case '7':
+        case '8':
+        case '9':
+          e.preventDefault();
+          seekToFraction(Number(e.key) * 0.1);
+          break;
         case 'Escape':
           if (immersiveMode) {
             setImmersiveMode(false);
@@ -637,7 +676,19 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, immersiveMode, togglePlay, toggleFullscreen, toggleMute, seekBy, changeVolume, volume, onClose]);
+  }, [
+    open,
+    immersiveMode,
+    togglePlay,
+    toggleFullscreen,
+    toggleMute,
+    seekBy,
+    seekToFraction,
+    changeVolume,
+    adjustPlaybackRate,
+    volume,
+    onClose,
+  ]);
 
   useEffect(() => {
     if (!open || !streamUrl || !videoRef.current) return undefined;
