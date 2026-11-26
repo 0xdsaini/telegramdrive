@@ -7,7 +7,7 @@ import React, {
   useCallback,
 } from 'react';
 import './FileExplorer.css';
-import { FaFile, FaFileImage, FaFileAlt, FaFileCode, FaMusic, FaFolder, FaTrash, FaArrowUp, FaPlus, FaUpload, FaHome, FaCheck } from 'react-icons/fa';
+import { FaFile, FaFileImage, FaFileAlt, FaFileCode, FaMusic, FaFolder, FaFolderPlus, FaTrash, FaArrowUp, FaPlus, FaUpload, FaHome, FaCheck } from 'react-icons/fa';
 import FileGridItem from './FileGridItem';
 import FolderGridItem from './FolderGridItem';
 import VideoPlayerModal from '../VideoPlayer/VideoPlayerModal';
@@ -22,8 +22,15 @@ import {
   isVideoFileName,
   mimeTypeFromTelegramContent,
 } from '../../utils/mimeTypes';
-import { generateVideoPosterJpeg } from '../../utils/generateVideoPosterJpeg';
-import { setCachedPoster } from '../../utils/thumbnailCache';
+import {
+  findFolderUploadFileCollisions,
+  planFolderUpload,
+} from '../../utils/folderUpload';
+import {
+  formatByteSize,
+  sendFileDocumentToTelegram,
+  TELEGRAM_MAX_FILE_BYTES,
+} from '../../utils/telegramDocumentUpload';
 import { streamDebug, streamDebugError } from '../../utils/streamDebug';
 import { lockLandscapeForPlayback } from '../../utils/playbackOrientation';
 import {
@@ -116,6 +123,7 @@ const FileExplorer = () => {
   const [currentPath, setCurrentPath] = useState('/');
   const [currentFolder, setCurrentFolder] = useState(null);
   const fileInputRef = useRef(null);
+  const folderInputRef = useRef(null);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [uploading, setUploading] = useState(false);
@@ -854,8 +862,129 @@ const FileExplorer = () => {
   };
 
   const handleFiles = (newFiles) => {
-    // Upload files to the current directory
     uploadFiles(newFiles);
+  };
+
+  const handleFolderSelect = (e) => {
+    const selectedFiles = Array.from(e.target.files || []);
+    if (e.target) {
+      e.target.value = '';
+    }
+    if (selectedFiles.length > 0) {
+      uploadFolder(selectedFiles);
+    }
+  };
+
+  const uploadFolder = async (filesToUpload) => {
+    if (!isConnected || !telegramClient) {
+      setError('Not connected to Telegram. Please authenticate first.');
+      return;
+    }
+    if (!selectedChatId) {
+      setError('No chat group selected. Please select a chat group first.');
+      return;
+    }
+    if (!window.updateTelegramFileStructure || typeof window.updateTelegramFileStructure !== 'function') {
+      setError('File upload system is not properly initialized. Please refresh the page and try again.');
+      return;
+    }
+
+    const plan = planFolderUpload(fileStructure, currentPath, filesToUpload);
+    if (!plan.ok) {
+      if (plan.reason === 'oversized' && plan.oversized?.length) {
+        const detail = plan.oversized
+          .map((f) => `• ${f.displayName} (${formatByteSize(f.size)})`)
+          .join('\n');
+        window.alert(
+          `Upload cancelled.\n\nThe following file(s) exceed Telegram's 2 GB limit:\n\n${detail}`,
+        );
+        setError(plan.message);
+      } else {
+        setError(plan.message || 'Could not prepare folder upload.');
+      }
+      return;
+    }
+
+    const collisions = findFolderUploadFileCollisions(plan.structureWithFolders, plan.entries);
+    if (collisions.length > 0) {
+      const proceed = window.confirm(
+        `${collisions.length} file(s) already exist in this drive and will be replaced if you continue. Upload anyway?`,
+      );
+      if (!proceed) {
+        return;
+      }
+    }
+
+    setError(null);
+    setSuccess(null);
+    setUploading(true);
+
+    let workingStructure = plan.structureWithFolders;
+    const folderLabel =
+      plan.resolvedRootName !== plan.originalRootName
+        ? `"${plan.originalRootName}" as "${plan.resolvedRootName}"`
+        : `"${plan.resolvedRootName}"`;
+
+    try {
+      setSuccess(`Creating folder structure for ${folderLabel} (${plan.entries.length} file(s))...`);
+      const foldersSaved = await window.updateTelegramFileStructure(workingStructure);
+      if (!foldersSaved) {
+        setError('Failed to save folder structure to Telegram.');
+        return;
+      }
+
+      let uploaded = 0;
+      for (const entry of plan.entries) {
+        try {
+          if (!entry.file.size) {
+            setError(`Skipped empty file: ${entry.filename}`);
+            continue;
+          }
+
+          setSuccess(
+            `Uploading ${uploaded + 1}/${plan.entries.length}: ${entry.filename} (${formatByteSize(entry.file.size)})...`,
+          );
+
+          await new Promise((resolve) => setTimeout(resolve, 100));
+
+          const { messageId } = await sendFileDocumentToTelegram(
+            telegramClient,
+            selectedChatId,
+            entry.file,
+          );
+
+          workingStructure = addFile(
+            workingStructure,
+            entry.targetFolderPath,
+            entry.filename,
+            messageId,
+          );
+
+          const saved = await window.updateTelegramFileStructure(workingStructure);
+          if (!saved) {
+            setError(`Uploaded ${entry.filename} but failed to update file structure.`);
+          } else {
+            uploaded += 1;
+          }
+        } catch (fileError) {
+          console.error(`Error uploading ${entry.filename}:`, fileError);
+          setError(`Failed to upload ${entry.filename}: ${fileError.message || 'Unknown error'}`);
+        }
+      }
+
+      if (uploaded === plan.entries.length) {
+        setSuccess(
+          `Uploaded folder ${folderLabel} (${uploaded} file(s)) under ${currentPath === '/' ? 'Home' : currentPath}.`,
+        );
+      } else if (uploaded > 0) {
+        setSuccess(`Partial upload: ${uploaded}/${plan.entries.length} file(s) in folder ${folderLabel}.`);
+      }
+    } catch (error) {
+      console.error('Failed to upload folder:', error);
+      setError(`Failed to upload folder: ${error.message || 'Unknown error'}`);
+    } finally {
+      setUploading(false);
+    }
   };
   
   const uploadFiles = async (filesToUpload) => {
@@ -898,99 +1027,39 @@ const FileExplorer = () => {
             }
           }
           
-          // Read the file as an ArrayBuffer with proper error handling
-          let fileBuffer;
+          if (!file.size) {
+            setError(`Failed to read file ${file.name}: Empty file`);
+            continue;
+          }
+
+          if (file.size > TELEGRAM_MAX_FILE_BYTES) {
+            setError(
+              `File ${file.name} is too large (${formatByteSize(file.size)}). Maximum size is 2 GB.`,
+            );
+            continue;
+          }
+
+          setSuccess(`Uploading ${file.name} (${formatByteSize(file.size)})...`);
+          console.log(`Uploading file: ${file.name}, size: ${file.size} bytes`);
+
+          await new Promise((resolve) => setTimeout(resolve, 100));
+
+          let messageId;
           try {
-            fileBuffer = await file.arrayBuffer();
-          } catch (readError) {
-            console.error(`Error reading file ${file.name}:`, readError);
-            setError(`Failed to read file ${file.name}: ${readError.message || 'Unknown error'}`);
-            continue;
-          }
-          
-          // Create a Uint8Array from the ArrayBuffer and check if it's valid
-          const fileData = new Uint8Array(fileBuffer);
-          
-          if (!fileData || fileData.length === 0) {
-            setError(`Failed to read file ${file.name}: Empty file data`);
-            continue;
-          }
-          
-          // Check file size - Personal accounts can handle up to 2GB
-          if (fileData.length > 2 * 1024 * 1024 * 1024) { // 2GB limit
-            setError(`File ${file.name} is too large (${(fileData.length / (1024 * 1024)).toFixed(2)}MB). Maximum size is 2GB.`);
-            continue;
-          }
-          
-          // Show progress message
-          setSuccess(`Uploading ${file.name} (${(fileData.length / 1024).toFixed(2)}KB)...`);
-          
-          // Send the file to Telegram with proper error handling
-          console.log(`Uploading file: ${file.name}, size: ${fileData.length} bytes`);
-          
-          // Make sure we wait for any pending operations before sending
-          await new Promise(resolve => setTimeout(resolve, 100));
-          
-          let result;
-          let uploadPoster = null;
-          if (isVideoFileName(file.name)) {
-            try {
-              uploadPoster = await generateVideoPosterJpeg(file);
-            } catch (posterErr) {
-              console.warn(`Poster generation skipped for ${file.name}:`, posterErr);
-            }
-          }
-
-          const inputMessageContent = {
-            '@type': 'inputMessageDocument',
-            document: {
-              '@type': 'inputFileBlob',
-              name: file.name,
-              data: file,
-            },
-            disable_content_type_detection: false,
-          };
-
-          if (uploadPoster?.blob) {
-            inputMessageContent.thumbnail = {
-              '@type': 'inputThumbnail',
-              thumbnail: {
-                '@type': 'inputFileBlob',
-                name: 'thumb.jpg',
-                data: uploadPoster.blob,
-              },
-              width: uploadPoster.width,
-              height: uploadPoster.height,
-            };
-          }
-
-          try {
-            result = await telegramClient.send({
-              '@type': 'sendMessage',
-              chat_id: selectedChatId,
-              input_message_content: inputMessageContent,
-            });
-            
-            console.log('Upload result:', result);
+            ({ messageId } = await sendFileDocumentToTelegram(
+              telegramClient,
+              selectedChatId,
+              file,
+            ));
+            console.log('Upload result messageId:', messageId);
           } catch (uploadError) {
             console.error(`Error during Telegram upload for ${file.name}:`, uploadError);
             setError(`Failed to upload ${file.name} to Telegram: ${uploadError.message || 'Unknown error'}`);
             continue;
           }
-          
-          if (result && result.id) {
-            if (uploadPoster?.blob) {
-              try {
-                await setCachedPoster(selectedChatId, result.id, uploadPoster.blob, {
-                  durationSec: null,
-                  source: 'upload-jpeg',
-                });
-              } catch (cacheErr) {
-                console.warn('Failed to cache upload poster:', cacheErr);
-              }
-            }
-            // Add the file to our file structure
-            const updatedStructure = addFile(fileStructure, currentPath, file.name, result.id);
+
+          if (messageId) {
+            const updatedStructure = addFile(fileStructure, currentPath, file.name, messageId);
             
             // Update the file structure in Telegram
             console.log('Updating file structure...');
@@ -1010,7 +1079,6 @@ const FileExplorer = () => {
             }
           } else {
             setError(`Failed to upload ${file.name}: No message ID returned`);
-            console.error(`Failed to upload ${file.name}: No message ID returned`, result);
           }
         } catch (fileError) {
           console.error(`Error uploading ${file.name}:`, fileError);
@@ -1030,11 +1098,6 @@ const FileExplorer = () => {
     fileInputRef.current?.click();
   };
 
-  const handleFileSelect = (e) => {
-    const selectedFiles = Array.from(e.target.files || []);
-    handleFiles(selectedFiles);
-  };
-  
   // No external API is needed, we're using the Telegram client directly with selectedChatId
 
   const handleDeleteFile = async (fileName, e) => {
@@ -1411,6 +1474,15 @@ const FileExplorer = () => {
           >
             <FaUpload /> Upload Files
           </button>
+
+          <button
+            type="button"
+            className="upload-button"
+            onClick={() => folderInputRef.current?.click()}
+            disabled={uploading}
+          >
+            <FaFolderPlus /> Upload Folder
+          </button>
           
           <button 
             className="new-folder-button" 
@@ -1437,6 +1509,14 @@ const FileExplorer = () => {
             ref={fileInputRef} 
             style={{ display: 'none' }} 
             onChange={(e) => handleFiles(Array.from(e.target.files))}
+            multiple
+          />
+          <input
+            type="file"
+            ref={folderInputRef}
+            style={{ display: 'none' }}
+            onChange={handleFolderSelect}
+            webkitdirectory=""
             multiple
           />
         </div>
