@@ -33,10 +33,7 @@ import {
   unregisterPlaybackFileId,
 } from '../../utils/streamBridge';
 import { requestTdlibFilePart } from '../../utils/tdlibFilePartReader';
-import {
-  downloadTelegramFileAsBlob,
-  triggerBrowserFileDownload,
-} from '../../utils/downloadTelegramFile';
+import { downloadTelegramFileWithStreaming } from '../../utils/streamingDownload';
 import {
   createEmptyFileStructure,
   findFolderByPath,
@@ -1338,19 +1335,22 @@ const FileExplorer = () => {
         });
       }
 
-      const blob = await downloadTelegramFileAsBlob(
+      const mimeType = mimeTypeFromTelegramContent(resolved.message, fileName);
+      await downloadTelegramFileWithStreaming(
         telegramClient,
         {
           fileId: resolved.fileId,
           size: resolved.size,
           fileName,
+          mimeType,
+          messageId: resolved.messageId,
+          chatId: selectedChatId,
         },
         {
           onProgress: (pct) => setSuccess(`Downloading ${fileName}… ${pct}%`),
         },
       );
 
-      triggerBrowserFileDownload(blob, fileName);
       setSuccess(`Downloaded ${fileName} successfully`);
     } catch (error) {
       console.error('Failed to download file:', error);
