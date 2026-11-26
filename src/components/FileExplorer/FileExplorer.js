@@ -1,4 +1,11 @@
-import React, { useState, useRef, useEffect, useContext, useCallback } from 'react';
+import React, {
+  useState,
+  useRef,
+  useEffect,
+  useLayoutEffect,
+  useContext,
+  useCallback,
+} from 'react';
 import './FileExplorer.css';
 import { FaFile, FaFileImage, FaFileAlt, FaFileCode, FaFolder, FaTrash, FaArrowUp, FaPlus, FaUpload, FaHome, FaCheck } from 'react-icons/fa';
 import FileGridItem from './FileGridItem';
@@ -111,7 +118,68 @@ const FileExplorer = () => {
   const initialUrlAppliedRef = useRef(false);
   const pendingPlayFileRef = useRef(null);
   const keyboardOpenFileRef = useRef(() => {});
+  const explorerRootRef = useRef(null);
+  const explorerContentRef = useRef(null);
+  const explorerScrollSnapshotRef = useRef(null);
   const [showDesktopNavChrome, setShowDesktopNavChrome] = useState(() => isDesktopFinePointer());
+
+  const getExplorerScrollTargets = useCallback(() => {
+    const targets = [explorerContentRef.current, explorerRootRef.current];
+    const parent = explorerRootRef.current?.parentElement;
+    if (parent && parent.scrollHeight > parent.clientHeight + 1) {
+      targets.push(parent);
+    }
+    return targets.filter(Boolean);
+  }, []);
+
+  const captureExplorerScroll = useCallback(() => {
+    explorerScrollSnapshotRef.current = getExplorerScrollTargets()
+      .filter((el) => el.scrollHeight > el.clientHeight + 1 || el.scrollTop > 0 || el.scrollLeft > 0)
+      .map((el) => ({ el, scrollTop: el.scrollTop, scrollLeft: el.scrollLeft }));
+  }, [getExplorerScrollTargets]);
+
+  const restoreExplorerScroll = useCallback(() => {
+    const snapshot = explorerScrollSnapshotRef.current;
+    if (!snapshot?.length) {
+      return;
+    }
+    const apply = () => {
+      snapshot.forEach(({ el, scrollTop, scrollLeft }) => {
+        if (!el.isConnected) {
+          return;
+        }
+        el.scrollTop = scrollTop;
+        el.scrollLeft = scrollLeft;
+      });
+    };
+    apply();
+    requestAnimationFrame(() => {
+      apply();
+      requestAnimationFrame(apply);
+    });
+  }, []);
+
+  const wasStreamOpenRef = useRef(false);
+
+  useLayoutEffect(() => {
+    if (streamPlayer.open) {
+      wasStreamOpenRef.current = true;
+      return undefined;
+    }
+    if (!wasStreamOpenRef.current) {
+      return undefined;
+    }
+    wasStreamOpenRef.current = false;
+
+    restoreExplorerScroll();
+    const timers = [50, 150, 350].map((ms) => window.setTimeout(restoreExplorerScroll, ms));
+    const onOrientation = () => restoreExplorerScroll();
+    window.addEventListener('orientationchange', onOrientation);
+    return () => {
+      timers.forEach((id) => window.clearTimeout(id));
+      window.removeEventListener('orientationchange', onOrientation);
+    };
+  }, [streamPlayer.open, restoreExplorerScroll]);
 
   useEffect(() => {
     const mq = window.matchMedia('(hover: hover) and (pointer: fine)');
@@ -1048,6 +1116,7 @@ const FileExplorer = () => {
   const openStreamForFile = useCallback(
     async (fileName, e) => {
       e?.stopPropagation?.();
+      captureExplorerScroll();
       void lockLandscapeForPlayback();
       streamDebug('play', 'handleStreamPlay click', {
         fileName,
@@ -1171,6 +1240,7 @@ const FileExplorer = () => {
       selectedChatId,
       telegramClient,
       updateFileStructure,
+      captureExplorerScroll,
     ],
   );
 
@@ -1263,7 +1333,7 @@ const FileExplorer = () => {
 
 
   return (
-    <div className="file-explorer">
+    <div className="file-explorer" ref={explorerRootRef}>
       <div className="file-explorer-nav">
         <div className="breadcrumb">
           <span 
@@ -1286,6 +1356,7 @@ const FileExplorer = () => {
       </div>
       
       <div 
+        ref={explorerContentRef}
         className={`file-explorer-content ${isDragging ? 'drag-over' : ''}`}
         onDrop={handleDrop}
         onDragOver={handleDragOver}
