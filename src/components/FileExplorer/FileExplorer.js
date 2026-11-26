@@ -7,7 +7,7 @@ import React, {
   useCallback,
 } from 'react';
 import './FileExplorer.css';
-import { FaFile, FaFileImage, FaFileAlt, FaFileCode, FaMusic, FaFolder, FaFolderPlus, FaTrash, FaArrowUp, FaPlus, FaUpload, FaHome, FaCheck } from 'react-icons/fa';
+import { FaFile, FaFileImage, FaFileAlt, FaFileCode, FaMusic, FaFolder, FaFolderPlus, FaTrash, FaArrowUp, FaPlus, FaUpload, FaHome, FaCheck, FaLink } from 'react-icons/fa';
 import FileGridItem from './FileGridItem';
 import FolderGridItem from './FolderGridItem';
 import VideoPlayerModal from '../VideoPlayer/VideoPlayerModal';
@@ -31,6 +31,10 @@ import {
   TELEGRAM_MAX_FILE_BYTES,
 } from '../../utils/telegramDocumentUpload';
 import { runBatchDocumentUpload } from '../../utils/batchDocumentUpload';
+import {
+  displayNameFromUrl,
+  sendDocumentFromUrlMtproto,
+} from '../../mtproto/sendDocumentFromUrlMtproto';
 import { streamDebug, streamDebugError } from '../../utils/streamDebug';
 import { lockLandscapeForPlayback } from '../../utils/playbackOrientation';
 import {
@@ -1105,6 +1109,83 @@ const FileExplorer = () => {
     fileInputRef.current?.click();
   };
 
+  const handleUploadFromUrl = async () => {
+    const url = window.prompt('HTTPS URL of the file (public, no auth):');
+    if (!url?.trim()) {
+      return;
+    }
+
+    if (!isConnected || !telegramClient?._gram) {
+      setError('Not connected to Telegram. Please authenticate first.');
+      return;
+    }
+    if (!selectedChatId) {
+      setError('No chat group selected. Please select a chat group first.');
+      return;
+    }
+    if (
+      !window.updateTelegramFileStructure
+      || typeof window.updateTelegramFileStructure !== 'function'
+    ) {
+      setError('File upload system is not properly initialized. Please refresh the page and try again.');
+      return;
+    }
+
+    const defaultName = displayNameFromUrl(url.trim());
+    const fileName =
+      window.prompt('Save as filename:', defaultName)?.trim() || defaultName;
+
+    setError(null);
+    setSuccess(null);
+    setUploading(true);
+    setUploadProgress(null);
+    setSuccess('Telegram is fetching the file from URL...');
+
+    try {
+      const gram = telegramClient._gram;
+      const { message, rewritten, rewriteNote } = await sendDocumentFromUrlMtproto(
+        gram,
+        selectedChatId,
+        url.trim(),
+      );
+      const messageId =
+        typeof message.id === 'bigint' ? Number(message.id) : Number(message.id);
+      if (!Number.isFinite(messageId)) {
+        throw new Error(`Invalid message id after URL upload: ${String(message.id)}`);
+      }
+
+      let workingStructure = fileStructure;
+      const folderExists = findFolderByPath(workingStructure, currentPath);
+      if (folderExists?.files?.some((f) => f.filename === fileName)) {
+        if (!window.confirm(`File ${fileName} already exists. Do you want to replace it?`)) {
+          setSuccess(`Sent to Telegram (message ${messageId}); not added to folder index.`);
+          return;
+        }
+      }
+
+      workingStructure = addFile(workingStructure, currentPath, fileName, messageId);
+      await window.updateTelegramFileStructure(workingStructure, { localOnly: true });
+      await window.updateTelegramFileStructure(workingStructure);
+      setSuccess(
+        rewritten
+          ? `Uploaded from URL: ${fileName} (${rewriteNote || 'via mirror'})`
+          : `Uploaded from URL: ${fileName}`,
+      );
+    } catch (error) {
+      console.error('Failed to upload from URL:', error);
+      const detail = error.message || 'Unknown error';
+      setError(
+        /WEBPAGE_CURL_FAILED/i.test(detail)
+          ? `URL upload failed: Telegram could not fetch that URL (${detail}). `
+            + 'Some hosts (e.g. GitHub raw) block Telegram; try jsDelivr (cdn.jsdelivr.net/gh/…) or a direct file CDN.'
+          : `URL upload failed: ${detail}`,
+      );
+    } finally {
+      setUploading(false);
+      setUploadProgress(null);
+    }
+  };
+
   // No external API is needed, we're using the Telegram client directly with selectedChatId
 
   const handleDeleteFile = async (fileName, e) => {
@@ -1463,6 +1544,15 @@ const FileExplorer = () => {
             disabled={uploading}
           >
             <FaFolderPlus /> Upload Folder
+          </button>
+
+          <button
+            type="button"
+            className="upload-button"
+            onClick={handleUploadFromUrl}
+            disabled={uploading}
+          >
+            <FaLink /> Upload URL
           </button>
           
           <button 
