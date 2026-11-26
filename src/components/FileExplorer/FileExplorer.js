@@ -28,9 +28,9 @@ import {
 } from '../../utils/folderUpload';
 import {
   formatByteSize,
-  sendFileDocumentToTelegram,
   TELEGRAM_MAX_FILE_BYTES,
 } from '../../utils/telegramDocumentUpload';
+import { runBatchDocumentUpload } from '../../utils/batchDocumentUpload';
 import { streamDebug, streamDebugError } from '../../utils/streamDebug';
 import { lockLandscapeForPlayback } from '../../utils/playbackOrientation';
 import {
@@ -928,77 +928,71 @@ const FileExplorer = () => {
         : `"${plan.resolvedRootName}"`;
 
     try {
-      setSuccess(`Creating folder structure for ${folderLabel} (${plan.entries.length} file(s))...`);
-      const foldersSaved = await window.updateTelegramFileStructure(workingStructure);
-      if (!foldersSaved) {
-        setError('Failed to save folder structure to Telegram.');
+      const batchItems = plan.entries
+        .filter((entry) => entry.file.size > 0)
+        .map((entry) => ({
+          file: entry.file,
+          key: entry.filename,
+          displayName: entry.filename,
+          meta: { targetFolderId: entry.targetFolderId },
+        }));
+
+      const emptyCount = plan.entries.length - batchItems.length;
+      if (emptyCount > 0) {
+        setError(`Skipped ${emptyCount} empty file(s) in folder.`);
+      }
+      if (batchItems.length === 0) {
+        setError('No files to upload in this folder.');
         return;
       }
 
-      let uploaded = 0;
-      for (const entry of plan.entries) {
-        try {
-          if (!entry.file.size) {
-            setError(`Skipped empty file: ${entry.filename}`);
-            continue;
+      setSuccess(
+        `Preparing folder ${folderLabel} (${batchItems.length} file(s)) for pipelined upload...`,
+      );
+      await window.updateTelegramFileStructure(workingStructure, { localOnly: true });
+
+      const { uploaded, total, errors } = await runBatchDocumentUpload({
+        telegramClient,
+        chatId: selectedChatId,
+        items: batchItems,
+        saveMetadata: (structure, opts) =>
+          window.updateTelegramFileStructure(structure, opts),
+        getStructure: () => workingStructure,
+        onUploadSuccess: (_structure, item, messageId) => {
+          const { targetFolderId } = item.meta || {};
+          if (targetFolderId == null) {
+            console.error(`Missing folder id for ${item.key}`);
+            return;
           }
-
-          setUploadProgress({
-            fileName: entry.filename,
-            done: 0,
-            total: entry.file.size,
-            ratio: 0,
-            batchIndex: uploaded + 1,
-            batchTotal: plan.entries.length,
-          });
-          setSuccess(
-            `Uploading ${uploaded + 1}/${plan.entries.length}: ${entry.filename} (${formatByteSize(entry.file.size)})...`,
-          );
-
-          const { messageId } = await sendFileDocumentToTelegram(
-            telegramClient,
-            selectedChatId,
-            entry.file,
-            {
-              onProgress: (p) =>
-                setUploadProgress({
-                  ...p,
-                  batchIndex: uploaded + 1,
-                  batchTotal: plan.entries.length,
-                }),
-            },
-          );
-
-          if (entry.targetFolderId == null) {
-            setError(`Skipped ${entry.filename}: missing folder id in upload plan.`);
-            continue;
-          }
-
           workingStructure = addFileByFolderId(
             workingStructure,
-            entry.targetFolderId,
-            entry.filename,
+            targetFolderId,
+            item.key,
             messageId,
           );
+          void window.updateTelegramFileStructure(workingStructure, { localOnly: true });
+        },
+        onProgress: (p) => setUploadProgress(p),
+        onCount: (done, batchTotal) => {
+          setSuccess(`Uploading ${done}/${batchTotal} file(s)...`);
+        },
+      });
 
-          const saved = await window.updateTelegramFileStructure(workingStructure);
-          if (!saved) {
-            setError(`Uploaded ${entry.filename} but failed to update file structure.`);
-          } else {
-            uploaded += 1;
-          }
-        } catch (fileError) {
-          console.error(`Error uploading ${entry.filename}:`, fileError);
-          setError(`Failed to upload ${entry.filename}: ${fileError.message || 'Unknown error'}`);
-        }
+      if (errors.length > 0) {
+        const first = errors[0];
+        setError(
+          `Failed to upload ${first.item?.displayName || first.item?.key}: ${
+            first.error?.message || 'Unknown error'
+          }`,
+        );
       }
 
-      if (uploaded === plan.entries.length) {
+      if (uploaded === total) {
         setSuccess(
           `Uploaded folder ${folderLabel} (${uploaded} file(s)) under ${currentPath === '/' ? 'Home' : currentPath}.`,
         );
       } else if (uploaded > 0) {
-        setSuccess(`Partial upload: ${uploaded}/${plan.entries.length} file(s) in folder ${folderLabel}.`);
+        setSuccess(`Partial upload: ${uploaded}/${total} file(s) in folder ${folderLabel}.`);
       }
     } catch (error) {
       console.error('Failed to upload folder:', error);
@@ -1033,89 +1027,70 @@ const FileExplorer = () => {
       setUploading(true);
       let workingStructure = fileStructure;
 
-      // Process files one by one
+      const batchItems = [];
       for (const file of filesToUpload) {
-        try {
-          console.log(`Starting upload for file: ${file.name}`);
-          
-          // Check if file already exists in the current path
-          const folderExists = findFolderByPath(workingStructure, currentPath);
-          if (folderExists) {
-            const fileExists = folderExists.files.some(f => f.filename === file.name);
-            if (fileExists) {
-              if (!window.confirm(`File ${file.name} already exists. Do you want to replace it?`)) {
-                continue; // Skip this file if user doesn't want to replace
-              }
-              // If replacing, we'll continue with the upload
+        const folderExists = findFolderByPath(workingStructure, currentPath);
+        if (folderExists) {
+          const fileExists = folderExists.files.some((f) => f.filename === file.name);
+          if (fileExists) {
+            if (!window.confirm(`File ${file.name} already exists. Do you want to replace it?`)) {
+              continue;
             }
           }
-          
-          if (!file.size) {
-            setError(`Failed to read file ${file.name}: Empty file`);
-            continue;
-          }
-
-          if (file.size > TELEGRAM_MAX_FILE_BYTES) {
-            setError(
-              `File ${file.name} is too large (${formatByteSize(file.size)}). Maximum size is 2 GB.`,
-            );
-            continue;
-          }
-
-          setUploadProgress({
-            fileName: file.name,
-            done: 0,
-            total: file.size,
-            ratio: 0,
-          });
-          setSuccess(`Uploading ${file.name} (${formatByteSize(file.size)})...`);
-          console.log(`Uploading file: ${file.name}, size: ${file.size} bytes`);
-
-          let messageId;
-          try {
-            ({ messageId } = await sendFileDocumentToTelegram(
-              telegramClient,
-              selectedChatId,
-              file,
-              {
-                onProgress: (p) => setUploadProgress(p),
-              },
-            ));
-            console.log('Upload result messageId:', messageId);
-          } catch (uploadError) {
-            console.error(`Error during Telegram upload for ${file.name}:`, uploadError);
-            setError(`Failed to upload ${file.name} to Telegram: ${uploadError.message || 'Unknown error'}`);
-            continue;
-          }
-
-          if (messageId) {
-            workingStructure = addFile(workingStructure, currentPath, file.name, messageId);
-
-            // Update the file structure in Telegram
-            console.log('Updating file structure...');
-            try {
-              const success = await window.updateTelegramFileStructure(workingStructure);
-
-              if (success) {
-                setSuccess(`Successfully uploaded ${file.name}`);
-                console.log(`Successfully uploaded ${file.name}`);
-              } else {
-                setError(`Failed to update file structure for ${file.name}`);
-                console.error(`Failed to update file structure for ${file.name}`);
-              }
-            } catch (updateError) {
-              console.error(`Error updating file structure for ${file.name}:`, updateError);
-              setError(`File uploaded but failed to update file structure: ${updateError.message || 'Unknown error'}`);
-            }
-          } else {
-            setError(`Failed to upload ${file.name}: No message ID returned`);
-          }
-        } catch (fileError) {
-          console.error(`Error uploading ${file.name}:`, fileError);
-          setError(`Failed to upload ${file.name}: ${fileError.message || 'Unknown error'}`);
         }
+
+        if (!file.size) {
+          setError(`Failed to read file ${file.name}: Empty file`);
+          continue;
+        }
+
+        if (file.size > TELEGRAM_MAX_FILE_BYTES) {
+          setError(
+            `File ${file.name} is too large (${formatByteSize(file.size)}). Maximum size is 2 GB.`,
+          );
+          continue;
+        }
+
+        batchItems.push({
+          file,
+          key: file.name,
+          displayName: file.name,
+        });
       }
-      
+
+      if (batchItems.length === 0) {
+        setUploading(false);
+        return;
+      }
+
+      const { uploaded, total, errors } = await runBatchDocumentUpload({
+        telegramClient,
+        chatId: selectedChatId,
+        items: batchItems,
+        saveMetadata: (structure, opts) =>
+          window.updateTelegramFileStructure(structure, opts),
+        getStructure: () => workingStructure,
+        onUploadSuccess: (_structure, item, messageId) => {
+          workingStructure = addFile(workingStructure, currentPath, item.key, messageId);
+          void window.updateTelegramFileStructure(workingStructure, { localOnly: true });
+        },
+        onProgress: (p) => setUploadProgress(p),
+        onCount: (done, batchTotal) => {
+          setSuccess(`Uploading ${done}/${batchTotal} file(s)...`);
+        },
+      });
+
+      if (errors.length > 0) {
+        const first = errors[0];
+        setError(
+          `Failed to upload ${first.item?.displayName || first.item?.key}: ${
+            first.error?.message || 'Unknown error'
+          }`,
+        );
+      } else if (uploaded === total) {
+        setSuccess(`Successfully uploaded ${uploaded} file(s).`);
+      }
+
       setUploading(false);
       setUploadProgress(null);
     } catch (error) {

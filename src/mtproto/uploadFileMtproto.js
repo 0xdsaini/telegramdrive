@@ -3,16 +3,15 @@ import { Api, errors } from 'telegram';
 import { generateRandomBytes, readBigIntFromBuffer, sleep } from 'telegram/Helpers';
 import { getAppropriatedPartSize } from 'telegram/Utils';
 import {
-  createUploadTransferScheduler,
   partActiveDelta,
   REGULAR_UPLOAD_ACTIVE_LIMIT,
 } from './uploadTransferScheduler';
 import {
-  createUploadSenderPool,
-  pinExportedSender,
-  releaseUploadSenderPool,
-  UPLOAD_SENDER_COUNT,
-} from './uploadSenderPool';
+  createUploadBatchSession,
+  closeUploadBatchSession,
+} from './uploadBatchSession';
+
+export { createUploadBatchSession, closeUploadBatchSession } from './uploadBatchSession';
 
 const KB_TO_BYTES = 1024;
 const LARGE_FILE_THRESHOLD = 10 * 1024 * 1024;
@@ -64,14 +63,17 @@ async function invokeUploadPart(client, sender, request) {
 }
 
 /**
- * Upload a browser File/Blob (Web K pipeline + telegram-tt multi-connection).
- * @param {import('telegram').TelegramClient} client
+ * Upload using an existing batch session (keeps connections warm).
+ * @param {Awaited<ReturnType<typeof createUploadBatchSession>>} session
  * @param {File | Blob} file
- * @param {{ onProgress?: (p: { done: number, total: number, fileName: string, ratio: number }) => void, activeLimit?: number, fileName?: string }} [opts]
- * @returns {Promise<Api.InputFile | Api.InputFileBig>}
+ * @param {{ onProgress?: Function, fileName?: string, prefetchBuffer?: ArrayBuffer | null }} [opts]
  */
-export async function uploadBrowserFileMtproto(client, file, opts = {}) {
-  const { onProgress, activeLimit = REGULAR_UPLOAD_ACTIVE_LIMIT, fileName: nameOverride } = opts;
+export async function uploadBrowserFileWithSession(session, file, opts = {}) {
+  if (!session || session.closed) {
+    throw new Error('Upload session is not active');
+  }
+  const { onProgress, fileName: nameOverride, prefetchBuffer } = opts;
+  const client = session.client;
   const name =
     nameOverride
     || (typeof File !== 'undefined' && file instanceof File ? file.name : 'file');
@@ -81,9 +83,8 @@ export async function uploadBrowserFileMtproto(client, file, opts = {}) {
   const partSize = getAppropriatedPartSize(bigInt(size)) * KB_TO_BYTES;
   const partCount = Math.max(1, Math.floor((size + partSize - 1) / partSize));
   const delta = partActiveDelta(partSize);
-  const dcId = client.session.dcId;
+  const { scheduler, senders } = session;
 
-  const scheduler = createUploadTransferScheduler(activeLimit);
   let completedParts = 0;
   let doneBytes = 0;
   const reportProgress = () => {
@@ -97,46 +98,45 @@ export async function uploadBrowserFileMtproto(client, file, opts = {}) {
   };
   reportProgress();
 
-  const unpin = pinExportedSender(client, dcId);
-  const senders = await createUploadSenderPool(client, dcId, UPLOAD_SENDER_COUNT);
+  const partPromises = [];
+  for (let partIndex = 0; partIndex < partCount; partIndex++) {
+    const begin = partIndex * partSize;
+    const end = Math.min(begin + partSize, size);
+    const sender = senders[partIndex % senders.length];
+    partPromises.push(
+      scheduler.schedule(delta, async () => {
+        let bytes;
+        if (size === 0) {
+          bytes = Buffer.alloc(0);
+        } else if (prefetchBuffer && end <= prefetchBuffer.byteLength) {
+          bytes = Buffer.from(prefetchBuffer.slice(begin, end));
+        } else {
+          const blobSlice = file.slice(begin, end);
+          bytes = Buffer.from(await blobSlice.arrayBuffer());
+        }
 
-  try {
-    const partPromises = [];
-    for (let partIndex = 0; partIndex < partCount; partIndex++) {
-      const begin = partIndex * partSize;
-      const end = Math.min(begin + partSize, size);
-      const sender = senders[partIndex % senders.length];
+        const request = isLarge
+          ? new Api.upload.SaveBigFilePart({
+              fileId,
+              filePart: partIndex,
+              fileTotalParts: partCount,
+              bytes,
+            })
+          : new Api.upload.SaveFilePart({
+              fileId,
+              filePart: partIndex,
+              bytes,
+            });
 
-      partPromises.push(
-        scheduler.schedule(delta, async () => {
-          const blobSlice = size === 0 ? file.slice(0, 0) : file.slice(begin, end);
-          const bytes = Buffer.from(await blobSlice.arrayBuffer());
-          const request = isLarge
-            ? new Api.upload.SaveBigFilePart({
-                fileId,
-                filePart: partIndex,
-                fileTotalParts: partCount,
-                bytes,
-              })
-            : new Api.upload.SaveFilePart({
-                fileId,
-                filePart: partIndex,
-                bytes,
-              });
-
-          await invokeUploadPart(client, sender, request);
-          completedParts += 1;
-          doneBytes = Math.min(completedParts * partSize, size);
-          reportProgress();
-        }),
-      );
-    }
-
-    await Promise.all(partPromises);
-  } finally {
-    unpin();
-    await releaseUploadSenderPool(senders);
+        await invokeUploadPart(client, sender, request);
+        completedParts += 1;
+        doneBytes = Math.min(completedParts * partSize, size);
+        reportProgress();
+      }),
+    );
   }
+
+  await Promise.all(partPromises);
 
   return isLarge
     ? new Api.InputFileBig({
@@ -150,4 +150,47 @@ export async function uploadBrowserFileMtproto(client, file, opts = {}) {
         name,
         md5Checksum: '',
       });
+}
+
+/**
+ * Upload a browser File/Blob (Web K pipeline + telegram-tt multi-connection).
+ * @param {import('telegram').TelegramClient} client
+ * @param {File | Blob} file
+ * @param {{ onProgress?: (p: { done: number, total: number, fileName: string, ratio: number }) => void, activeLimit?: number, fileName?: string, uploadSession?: Awaited<ReturnType<typeof createUploadBatchSession>> }} [opts]
+ * @returns {Promise<Api.InputFile | Api.InputFileBig>}
+ */
+export async function uploadBrowserFileMtproto(client, file, opts = {}) {
+  const { uploadSession, activeLimit = REGULAR_UPLOAD_ACTIVE_LIMIT, onProgress, fileName } =
+    opts;
+
+  if (uploadSession && !uploadSession.closed) {
+    return uploadBrowserFileWithSession(uploadSession, file, { onProgress, fileName });
+  }
+
+  const session = await createUploadBatchSession(client, { activeLimit });
+  try {
+    return await uploadBrowserFileWithSession(session, file, { onProgress, fileName });
+  } finally {
+    await closeUploadBatchSession(session);
+  }
+}
+
+/**
+ * Warm the browser file in memory while another upload is in flight.
+ * @param {File} file
+ * @returns {Promise<ArrayBuffer | null>}
+ */
+export async function prefetchFileBuffer(file) {
+  if (!file?.size) {
+    return null;
+  }
+  if (file.size > LARGE_FILE_THRESHOLD) {
+    return null;
+  }
+  try {
+    return await file.arrayBuffer();
+  } catch (err) {
+    console.warn(`prefetchFileBuffer failed for ${file.name}:`, err);
+    return null;
+  }
 }

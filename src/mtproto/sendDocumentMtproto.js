@@ -8,15 +8,25 @@ import { registerDocumentFromMessage } from './documentRegistry';
  * @param {import('telegram').TelegramClient} gram
  * @param {number} chatId
  * @param {File} file
- * @param {{ onProgress?: Function, thumb?: Blob | File | null, workers?: number }} [opts]
+ * @param {{ onProgress?: Function, thumb?: Blob | File | null, workers?: number, uploadSession?: object, prefetchBuffer?: ArrayBuffer | null, thumbPrefetchBuffer?: ArrayBuffer | null }} [opts]
  */
 export async function sendDocumentMtproto(gram, chatId, file, opts = {}) {
-  const { onProgress, thumb } = opts;
+  const {
+    onProgress,
+    thumb,
+    uploadSession,
+    prefetchBuffer,
+    thumbPrefetchBuffer,
+  } = opts;
 
-  const fileHandle = await uploadBrowserFileMtproto(gram, file, {
+  const uploadOpts = {
     onProgress,
     fileName: file.name,
-  });
+    uploadSession,
+    prefetchBuffer,
+  };
+
+  const fileHandle = await uploadBrowserFileMtproto(gram, file, uploadOpts);
 
   let uploadedThumb;
   if (thumb && thumb.size) {
@@ -26,6 +36,8 @@ export async function sendDocumentMtproto(gram, chatId, file, opts = {}) {
         : new File([thumb], 'thumb.jpg', { type: thumb.type || 'image/jpeg' });
     uploadedThumb = await uploadBrowserFileMtproto(gram, thumbFile, {
       fileName: thumbFile.name,
+      uploadSession,
+      prefetchBuffer: thumbPrefetchBuffer,
     });
   }
 

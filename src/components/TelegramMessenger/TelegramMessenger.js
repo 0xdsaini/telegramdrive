@@ -25,6 +25,7 @@ import {
   rememberMetadataMessageId,
 } from '../../utils/metadataStorageMessage';
 import { collectChatHistoryMatches } from '../../utils/chatHistoryScan';
+import { editDocumentMessageMtproto } from '../../mtproto/editDocumentMtproto';
 import './TelegramMessenger.css';
 
 function decodeFilePartAsUtf8(data) {
@@ -638,7 +639,7 @@ const TelegramMessenger = () => {
   };
 
   // Edit an existing message in Telegram
-  const editMessage = async (newMessage, message_id, chat_id) => {
+  const editMessage = async (newMessage, message_id, chat_id, editOpts = {}) => {
     console.log("Editing message with ID:", message_id);
 
     // With file based metadata, it won't be compabitle with old telegram' interface's edit message. You can edit that function respectively if you want to use file based metadata with that.
@@ -647,38 +648,37 @@ const TelegramMessenger = () => {
     let message;
 
     try {
-      message = throwIfTdlibError(
-        await window.tdClient.send({
-          '@type': 'editMessageMedia',
-          'chat_id': chat_id,
-          'message_id': message_id,
-          'input_message_content': {
-            '@type': 'inputMessageDocument',
-            'document': {
-              '@type': 'inputFileBlob',
-              'name': newMetadataFile.name,
-              'data': newMetadataFile,
+      const gram = clientRef.current?._gram;
+      if (editOpts.uploadSession && gram) {
+        await editDocumentMessageMtproto(gram, chat_id, message_id, newMetadataFile, {
+          caption: METADATA_MARKER,
+          uploadSession: editOpts.uploadSession,
+        });
+        message = { '@type': 'message', id: message_id };
+      } else {
+        message = throwIfTdlibError(
+          await window.tdClient.send({
+            '@type': 'editMessageMedia',
+            'chat_id': chat_id,
+            'message_id': message_id,
+            'input_message_content': {
+              '@type': 'inputMessageDocument',
+              'document': {
+                '@type': 'inputFileBlob',
+                'name': newMetadataFile.name,
+                'data': newMetadataFile,
+              },
+              'caption': {
+                '@type': 'formattedText',
+                'text': METADATA_MARKER,
+              },
             },
-            'caption': {
-              '@type': 'formattedText',
-              'text': METADATA_MARKER,
-            },
-          },
-        }),
-      );
+          }),
+        );
+      }
 
       console.log("Message sent just now", message);
 
-      // let fileId = message.content.document.document.id;
-      // console.log("messageId", fileId);
-
-      // the message.id that's being passed to it is bogus/garbage. it don't
-      // mean a thing.
-      // let text = await downloadFileandExtractMetadata(message.id).text;
-      // console.log("text(inside sendMessage): ", text);      
-
-      // TODO: I don't think we can store message_id in localStorage here, because we're not getting it from the preceding function. Also is this this function's responsibility to store it in localStorage, I don't think so. But maybe yes, find out and resolve this matter
-      // localStorage.setItem(MESSAGE_ID_KEY, result.id.toString());
       console.log('Message edited successfully');
       setStatus('Message edited successfully');
       
@@ -689,14 +689,9 @@ const TelegramMessenger = () => {
         }
       }, 3000);
 
-      // TODO: Fix this later.
-      // The caller needs this message to access its message.id
-      // which is garbage/random value given by telegram. real value is provided
-      // by it in updateMessage or updateFile somewhat event. these values are
-      // useless really.
-
-      // TODO: Fix this, Hacky: wait for 1 second before returning
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      if (!editOpts.skipReturnDelay) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
       return message;
       
     } catch(error) {
@@ -744,14 +739,30 @@ const TelegramMessenger = () => {
   };
 
   // Update file structure in Telegram
-  const updateFileStructure = async (updatedStructure) => {
+  const updateFileStructure = async (updatedStructure, saveOpts = {}) => {
     try {
       if (!selectedChatId) {
         throw new Error('No chat selected. Please select a chat group first.');
       }
 
+      const {
+        skipRemoteFetch = false,
+        skipEditReturnDelay = false,
+        uploadSession = null,
+        localOnly = false,
+      } = saveOpts;
+
+      const stampedStructure = stampFileStructureUpdatedAt(
+        ensureFolderIds(updatedStructure),
+      );
+      setFileStructure(stampedStructure);
+
+      if (localOnly) {
+        return true;
+      }
+
       // Re-fetch Telegram metadata so two devices do not clobber each other.
-      if (messageId) {
+      if (messageId && !skipRemoteFetch) {
         const remote = await downloadFileandExtractMetadata(messageId);
         const remoteStructure = loadFileStructureFromTelegram(
           remote.text,
@@ -770,20 +781,25 @@ const TelegramMessenger = () => {
           updatedStructure = mergeFileStructures(remoteStructure, updatedStructure, {
             nameWinsFrom: 'remote',
           });
+          setFileStructure(
+            stampFileStructureUpdatedAt(ensureFolderIds(updatedStructure)),
+          );
         }
+      } else if (skipRemoteFetch) {
+        updatedStructure = stampedStructure;
       }
 
-      const stampedStructure = stampFileStructureUpdatedAt(
-        ensureFolderIds(updatedStructure),
+      const messageText = serializeFileStructure(
+        stampFileStructureUpdatedAt(ensureFolderIds(updatedStructure)),
       );
-      setFileStructure(stampedStructure);
-
-      const messageText = serializeFileStructure(stampedStructure);
 
       console.log('Updating file structure in chat ID:', selectedChatId);
 
       if (messageId) {
-        await editMessage(messageText, messageId, selectedChatId);
+        await editMessage(messageText, messageId, selectedChatId, {
+          skipReturnDelay: skipEditReturnDelay,
+          uploadSession,
+        });
       } else {
         const result = await sendMessage(messageText, selectedChatId);
         console.log("ResultId(in updateFileStructure):", result.id);

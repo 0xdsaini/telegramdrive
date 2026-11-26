@@ -8,12 +8,16 @@ import { uploadBrowserFileMtproto } from './uploadFileMtproto';
  * @param {number} chatId
  * @param {number} messageId
  * @param {File} file
- * @param {{ caption?: string }} [opts]
+ * @param {{ caption?: string, uploadSession?: object, prefetchBuffer?: ArrayBuffer | null }} [opts]
  */
 export async function editDocumentMessageMtproto(gram, chatId, messageId, file, opts = {}) {
-  const { caption = '' } = opts;
+  const { caption = '', uploadSession, prefetchBuffer } = opts;
 
-  const fileHandle = await uploadBrowserFileMtproto(gram, file, { fileName: file.name });
+  const fileHandle = await uploadBrowserFileMtproto(gram, file, {
+    fileName: file.name,
+    uploadSession,
+    prefetchBuffer,
+  });
   const { mimeType, attrs } = utils.getAttributes(file, { forceDocument: true });
 
   const media = new Api.InputMediaUploadedDocument({
