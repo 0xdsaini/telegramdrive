@@ -1279,19 +1279,6 @@ const FileExplorer = () => {
           metadataMessageId: fileEntry.message_id,
         });
 
-        if (resolved.messageId !== fileEntry.message_id) {
-          const updatedStructure = addFile(
-            fileStructure,
-            currentPath,
-            fileName,
-            resolved.messageId,
-          );
-          updateFileStructure(updatedStructure);
-          window.updateTelegramFileStructure?.(updatedStructure).catch((syncError) => {
-            console.warn('Background metadata message_id repair failed:', syncError);
-          });
-        }
-
         const mimeType = mimeTypeFromTelegramContent(resolved.message, fileName);
         if (!isStreamableMimeType(mimeType)) {
           setStreamPlayer({ open: false, url: '', title: '', fileId: null, audioOnly: false });
@@ -1410,19 +1397,6 @@ const FileExplorer = () => {
         fileName,
         fileEntry.message_id,
       );
-
-      if (resolved.messageId !== fileEntry.message_id) {
-        const updatedStructure = addFile(
-          fileStructure,
-          currentPath,
-          fileName,
-          resolved.messageId,
-        );
-        updateFileStructure(updatedStructure);
-        window.updateTelegramFileStructure?.(updatedStructure).catch((syncError) => {
-          console.warn('Background metadata message_id repair failed:', syncError);
-        });
-      }
 
       const mimeType = mimeTypeFromTelegramContent(resolved.message, fileName);
       await downloadTelegramFileWithStreaming(

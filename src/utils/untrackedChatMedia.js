@@ -93,7 +93,24 @@ function namesMatch(expected, actual) {
   if (expected === actual) {
     return true;
   }
-  return expected.localeCompare(actual, undefined, { sensitivity: 'accent' }) === 0;
+  if (expected.localeCompare(actual, undefined, { sensitivity: 'accent' }) === 0) {
+    return true;
+  }
+  // Telegram sometimes stores uploaded names with '.' replaced by '_' (e.g. many dots or odd extensions).
+  const telegramNorm = (name) => name.replace(/\./g, '_').toLowerCase();
+  return telegramNorm(expected) === telegramNorm(actual);
+}
+
+const PLAYABLE_MESSAGE_TYPES = new Set([
+  'messageDocument',
+  'messageVideo',
+  'messageAudio',
+  'messageAnimation',
+]);
+
+/** Whether TDLib message content can be resolved to a downloadable file id. */
+export function messageHasPlayableFileContent(message) {
+  return PLAYABLE_MESSAGE_TYPES.has(message?.content?.['@type']);
 }
 
 /** Whether a Telegram message is the metadata file entry the user asked for. */

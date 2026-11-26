@@ -1,8 +1,5 @@
 import { streamDebug, streamDebugError } from './streamDebug';
-import {
-  deriveVideoFileNameFromMessage,
-  messageMatchesRequestedFile,
-} from './untrackedChatMedia';
+import { messageHasPlayableFileContent } from './untrackedChatMedia';
 
 function isTdlibError(value) {
   return value?.['@type'] === 'error';
@@ -24,88 +21,10 @@ async function fetchMessage(telegramClient, chatId, messageId) {
   }
 }
 
-async function searchMessageByFileName(telegramClient, chatId, fileName, messageId) {
-  const searchResult = await telegramClient.send({
-    '@type': 'searchChatMessages',
-    chat_id: chatId,
-    query: fileName,
-    limit: 50,
-    from_message_id: 0,
-    offset: 0,
-    only_missed: false,
-  });
-
-  const candidates = searchResult?.messages ?? [];
-  if (!candidates.length) {
-    return null;
-  }
-
-  if (messageId != null) {
-    const byId = candidates.find(
-      (msg) => msg.id === messageId && messageMatchesRequestedFile(msg, fileName),
-    );
-    if (byId) {
-      streamDebug('resolve', 'search hit by message_id + filename', {
-        messageId,
-        fileName,
-      });
-      return byId;
-    }
-  }
-
-  for (const msg of candidates) {
-    if (messageMatchesRequestedFile(msg, fileName)) {
-      streamDebug('resolve', 'search hit by exact filename', {
-        messageId: msg.id,
-        fileName,
-      });
-      return msg;
-    }
-  }
-
-  return null;
-}
-
-/**
- * Resolve a stored metadata file entry to TDLib file id + size.
- */
-export async function resolveTelegramFile(telegramClient, chatId, fileName, messageId) {
-  streamDebug('resolve', 'start', { chatId, fileName, messageId });
-
-  let message = await fetchMessage(telegramClient, chatId, messageId);
-
-  if (message && !messageMatchesRequestedFile(message, fileName)) {
-    streamDebug('resolve', 'metadata message_id points at different file', {
-      messageId,
-      requestedFileName: fileName,
-      telegramFileName: message.content?.document?.file_name
-        ?? message.content?.video?.file_name
-        ?? deriveVideoFileNameFromMessage(message),
-      resolvedMessageId: message.id,
-    });
-    message = null;
-  }
-
-  if (!message) {
-    message = await searchMessageByFileName(telegramClient, chatId, fileName, messageId);
-  }
-
-  if (!message?.content) {
-    throw new Error(
-      `Could not find Telegram message for "${fileName}" (metadata message_id=${messageId}).`,
-    );
-  }
-
-  if (!messageMatchesRequestedFile(message, fileName)) {
-    throw new Error(
-      `Resolved message #${message.id} is not "${fileName}". Check metadata message_id.`,
-    );
-  }
-
+function extractFileFromMessage(message) {
   const content = message.content;
   let fileId = null;
   let size = 0;
-  const resolvedMessageId = message.id;
 
   if (content['@type'] === 'messageDocument') {
     const doc = content.document;
@@ -129,11 +48,41 @@ export async function resolveTelegramFile(telegramClient, chatId, fileName, mess
     size = content.animation?.animation?.size || 0;
   }
 
-  if (!fileId) {
-    streamDebugError('resolve', 'no fileId', { contentType: content['@type'] });
-    throw new Error('Could not resolve Telegram file id from message.');
+  return { fileId, size };
+}
+
+/**
+ * Resolve a metadata file entry to TDLib file id + size via message_id only.
+ * @param {*} telegramClient
+ * @param {number} chatId
+ * @param {string} [fileName] Display / MIME hints only; not used to locate the message.
+ * @param {number} messageId
+ */
+export async function resolveTelegramFile(telegramClient, chatId, fileName, messageId) {
+  const numericMessageId = Number(messageId);
+  streamDebug('resolve', 'start', { chatId, fileName, messageId: numericMessageId });
+
+  if (!Number.isFinite(numericMessageId)) {
+    throw new Error(`Invalid message_id for "${fileName ?? 'file'}".`);
   }
 
+  const message = await fetchMessage(telegramClient, chatId, numericMessageId);
+
+  if (!message) {
+    throw new Error(`Could not load Telegram message #${numericMessageId}.`);
+  }
+
+  if (!messageHasPlayableFileContent(message)) {
+    throw new Error(`Message #${numericMessageId} has no downloadable media.`);
+  }
+
+  const { fileId, size: contentSize } = extractFileFromMessage(message);
+  if (!fileId) {
+    streamDebugError('resolve', 'no fileId', { contentType: message.content['@type'] });
+    throw new Error(`Could not resolve file id from message #${numericMessageId}.`);
+  }
+
+  let size = contentSize;
   const fileInfo = await telegramClient.send({
     '@type': 'getFile',
     file_id: fileId,
@@ -147,7 +96,7 @@ export async function resolveTelegramFile(telegramClient, chatId, fileName, mess
   const out = {
     fileId,
     size,
-    messageId: resolvedMessageId,
+    messageId: message.id,
     message,
   };
   streamDebug('resolve', 'done', {
