@@ -88,14 +88,21 @@
   top: 0;
   left: 0;
   right: 0;
-  z-index: 8;
+  z-index: 25;
   display: none;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: calc(4px + env(safe-area-inset-top, 0px)) 8px 4px;
-  padding-left: max(8px, env(safe-area-inset-left, 0px));
-  padding-right: max(8px, env(safe-area-inset-right, 0px));
+  padding: calc(6px + env(safe-area-inset-top, 0px)) 10px 10px;
+  padding-left: max(10px, env(safe-area-inset-left, 0px));
+  padding-right: max(10px, env(safe-area-inset-right, 0px));
+  overflow: visible;
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.72) 0%,
+    rgba(0, 0, 0, 0.38) 72%,
+    transparent 100%
+  );
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.2s ease;
@@ -123,18 +130,52 @@
 }
 
 .yt-player-topbtn:active {
-  background: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.yt-player-topbtn--close,
+.yt-player-topbtn--settings {
+  background: rgba(0, 0, 0, 0.58);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.45);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+
+.yt-player-topbtn--settings {
+  width: auto;
+  min-width: 40px;
+  max-width: 7.5rem;
+  height: 40px;
+  padding: 0 12px;
+  border-radius: 999px;
+}
+
+.yt-player-topbtn--settings[aria-expanded='true'] {
+  background: rgba(40, 40, 40, 0.92);
+  outline: 1px solid rgba(255, 255, 255, 0.28);
+}
+
+.yt-player-topbtn--settings .yt-player-rate-label {
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.65);
 }
 
 .yt-player-settings-wrap--top {
   position: relative;
   margin-left: auto;
+  z-index: 2;
 }
 
 .yt-player-settings-menu--top {
-  top: calc(100% + 6px);
+  top: calc(100% + 8px);
   bottom: auto;
   right: 0;
+  z-index: 30;
+  border: 1px solid rgba(255, 255, 255, 0.14);
 }
 
 .yt-player-close {
@@ -592,8 +633,12 @@
 
 .yt-player-settings-menu button:hover,
 .yt-player-settings-menu button.is-active {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.12);
   color: #fff;
+}
+
+.yt-player-settings-menu button.is-active {
+  background: rgba(255, 48, 48, 0.28);
 }
 
 @media (max-width: 600px) {
@@ -649,6 +694,32 @@
 @media (hover: none) and (pointer: coarse) {
   .yt-player-topbar {
     display: flex;
+  }
+
+  .yt-player-topbtn--close,
+  .yt-player-topbtn--settings {
+    background: rgba(18, 18, 18, 0.82);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.55);
+  }
+
+  .yt-player-topbtn--settings {
+    min-width: 44px;
+    height: 44px;
+    font-size: 1.05rem;
+  }
+
+  .yt-player-settings-menu--top {
+    min-width: 9.5rem;
+    padding: 8px 0;
+    background: rgba(22, 22, 22, 0.98);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.65);
+  }
+
+  .yt-player-settings-menu--top button {
+    padding: 12px 18px;
+    font-size: 0.95rem;
+    color: #f3f3f3;
   }
 
   .yt-player-close--desktop {
