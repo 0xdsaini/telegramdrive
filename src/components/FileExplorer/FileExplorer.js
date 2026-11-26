@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useContext, useCallback } from 'rea
 import './FileExplorer.css';
 import { FaFile, FaFileImage, FaFileAlt, FaFileCode, FaFolder, FaTrash, FaArrowUp, FaPlus, FaUpload, FaHome, FaCheck } from 'react-icons/fa';
 import FileGridItem from './FileGridItem';
+import FolderGridItem from './FolderGridItem';
 import VideoPlayerModal from '../VideoPlayer/VideoPlayerModal';
 import VideoPosterTile from './VideoPosterTile';
 import { resolveTelegramFile } from '../../utils/telegramFileResolver';
@@ -22,11 +23,22 @@ import {
   downloadTelegramFileAsBlob,
   triggerBrowserFileDownload,
 } from '../../utils/downloadTelegramFile';
-import { createEmptyFileStructure, findFolderByPath, createFolder, deleteFolder, moveFolder, addFile, deleteFile, moveFile } from '../../utils/fileStructureUtils';
+import {
+  createEmptyFileStructure,
+  findFolderByPath,
+  createFolder,
+  deleteFolder,
+  renameFolder,
+  moveFolder,
+  addFile,
+  deleteFile,
+  moveFile,
+} from '../../utils/fileStructureUtils';
 import { TelegramContext } from '../../context/TelegramContext';
 import UntrackedFilesPanel, { useUntrackedFiles } from './UntrackedFilesPanel';
 import UntrackedFilesToggle from './UntrackedFilesToggle';
 import { useExplorerKeyboardNav } from './useExplorerKeyboardNav';
+import { isDesktopFinePointer } from '../../utils/deviceInput';
 import {
   parseExplorerUrlFromLocation,
   pushExplorerBrowserUrl,
@@ -99,6 +111,15 @@ const FileExplorer = () => {
   const initialUrlAppliedRef = useRef(false);
   const pendingPlayFileRef = useRef(null);
   const keyboardOpenFileRef = useRef(() => {});
+  const [showDesktopNavChrome, setShowDesktopNavChrome] = useState(() => isDesktopFinePointer());
+
+  useEffect(() => {
+    const mq = window.matchMedia('(hover: hover) and (pointer: fine)');
+    const update = () => setShowDesktopNavChrome(mq.matches);
+    update();
+    mq.addEventListener('change', update);
+    return () => mq.removeEventListener('change', update);
+  }, []);
 
   // Access the Telegram context
   const { 
@@ -306,6 +327,74 @@ const FileExplorer = () => {
     }
     
     return files;
+  };
+
+  const handleRenameFolder = async (folderName, e) => {
+    e?.stopPropagation?.();
+
+    const newNameRaw = window.prompt('Enter new folder name:', folderName);
+    if (newNameRaw == null) {
+      return;
+    }
+
+    const newName = newNameRaw.trim();
+    if (!newName || newName.includes('/')) {
+      setError('Invalid folder name. Folder name cannot be empty or contain "/"');
+      return;
+    }
+
+    if (newName === folderName) {
+      return;
+    }
+
+    try {
+      setError(null);
+      setSuccess(null);
+
+      if (!isConnected || !telegramClient) {
+        setError('Not connected to Telegram. Please authenticate first.');
+        return;
+      }
+
+      if (!selectedChatId) {
+        setError('No chat group selected. Please select a chat group first.');
+        return;
+      }
+
+      const folderPath = currentPath === '/' ? `/${folderName}` : `${currentPath}/${folderName}`;
+      const parent = findFolderByPath(fileStructure, currentPath);
+      if (parent?.subfolders?.some((f) => f.name === newName)) {
+        setError(`A folder named "${newName}" already exists here`);
+        return;
+      }
+
+      const before = JSON.stringify(fileStructure);
+      const updatedStructure = renameFolder(fileStructure, folderPath, newName);
+      if (JSON.stringify(updatedStructure) === before) {
+        setError('Failed to rename folder');
+        return;
+      }
+
+      const success = await window.updateTelegramFileStructure(updatedStructure);
+      if (!success) {
+        setError('Failed to rename folder');
+        return;
+      }
+
+      const renamedPath =
+        currentPath === '/' ? `/${newName}` : `${currentPath}/${newName}`;
+      if (currentPath === folderPath || currentPath.startsWith(`${folderPath}/`)) {
+        const suffix =
+          currentPath === folderPath ? '' : currentPath.slice(folderPath.length);
+        urlWriteModeRef.current = 'replace';
+        setCurrentPath(`${renamedPath}${suffix}`);
+      }
+
+      setSuccess(`Folder renamed to "${newName}"`);
+    } catch (error) {
+      console.error('Failed to rename folder:', error);
+      setError(`Failed to rename folder: ${error.message}`);
+    }
   };
 
   const handleDeleteFolder = async (folderName, e) => {
@@ -1292,47 +1381,25 @@ const FileExplorer = () => {
           ) : (
             <>
               {gridItems.map((item, index) => {
-                const keyboardSelected = selectedIndex === index;
+                const keyboardSelected = showDesktopNavChrome && selectedIndex === index;
 
                 if (item.type === 'folder') {
                   const folderName = item.name;
                   return (
-                    <div
+                    <FolderGridItem
                       key={item.key}
-                      ref={setItemRef(index)}
-                      className={[
-                        'file-item',
-                        'folder-item',
-                        keyboardSelected ? 'file-item--keyboard-selected' : '',
-                      ]
-                        .filter(Boolean)
-                        .join(' ')}
-                      aria-selected={keyboardSelected || undefined}
-                      onClick={() => {
-                        setSelectedIndex(index);
-                        handleFolderClick(folderName);
-                      }}
-                      draggable
-                      onDragStart={(e) => {
-                        e.dataTransfer.setData(
-                          'text/plain',
-                          `folder:${currentPath === '/' ? `/${folderName}` : `${currentPath}/${folderName}`}`,
-                        );
-                      }}
+                      itemRef={setItemRef(index)}
+                      folderName={folderName}
+                      currentPath={currentPath}
+                      keyboardSelected={keyboardSelected}
+                      onSelect={() => setSelectedIndex(index)}
+                      onOpen={handleFolderClick}
+                      onRename={handleRenameFolder}
+                      onDelete={handleDeleteFolder}
                       onDragOver={(e) => handleFolderDragOver(e, folderName)}
                       onDragLeave={handleFolderDragLeave}
                       onDrop={(e) => handleFolderDrop(e, folderName)}
-                    >
-                      <FaFolder style={{ fontSize: '42px', color: '#0088cc' }} />
-                      <span className="file-name">{folderName}</span>
-                      <button
-                        className="delete-button"
-                        onClick={(e) => handleDeleteFolder(folderName, e)}
-                        title="Delete folder"
-                      >
-                        <FaTrash />
-                      </button>
-                    </div>
+                    />
                   );
                 }
 

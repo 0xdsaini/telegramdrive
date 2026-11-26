@@ -219,6 +219,54 @@ export const deleteFolder = (fileStructure, path) => {
 };
 
 /**
+ * Renames a folder in place (same parent, new display name).
+ * @param {Object} fileStructure - The file structure object
+ * @param {string} path - Full path to the folder to rename
+ * @param {string} newFolderName - New folder name
+ * @returns {Object} Updated file structure
+ */
+export const renameFolder = (fileStructure, path, newFolderName) => {
+  if (path === '/' || path === '') {
+    console.error('Cannot rename root folder');
+    return fileStructure;
+  }
+
+  const trimmed = typeof newFolderName === 'string' ? newFolderName.trim() : '';
+  if (!trimmed || trimmed.includes('/')) {
+    console.error('Invalid folder name for rename');
+    return fileStructure;
+  }
+
+  const segments = path.split('/').filter(Boolean);
+  const oldName = segments.pop();
+  const parentPath = segments.length ? `/${segments.join('/')}` : '/';
+
+  const parent = findFolderByPath(fileStructure, parentPath);
+  if (!parent) {
+    console.error(`Parent folder not found: ${parentPath}`);
+    return fileStructure;
+  }
+
+  const folder = parent.subfolders.find((f) => f.name === oldName);
+  if (!folder) {
+    console.error(`Folder not found: ${oldName}`);
+    return fileStructure;
+  }
+
+  if (trimmed === oldName) {
+    return fileStructure;
+  }
+
+  if (parent.subfolders.some((f) => f.name === trimmed)) {
+    console.error(`Folder already exists: ${trimmed}`);
+    return fileStructure;
+  }
+
+  folder.name = trimmed;
+  return fileStructure;
+};
+
+/**
  * Moves a folder to a new location
  * @param {Object} fileStructure - The file structure object
  * @param {string} sourcePath - Path to the folder to move
