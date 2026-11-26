@@ -18,6 +18,10 @@
   <strong>Try it online:</strong> <a href="https://0xdsaini.github.io/telegramdrive">https://0xdsaini.github.io/telegramdrive</a>
 </p>
 
+<p align="center">
+  New here? Start with <a href="#privacy">Privacy</a> and <a href="#for-new-users--start-here">For new users</a>.
+</p>
+
 ## Privacy
 
 **We don’t store any of your data.** Telegram Drive is not a cloud account with us—it is a page you open in your browser. Once it loads, the app runs on your device and talks to **Telegram**, the same service you already use on your phone.
@@ -32,6 +36,8 @@
 | Extras on your device | Your chosen group and small helpers (like preview images), stored locally in the browser on that device only. |
 
 There is no Telegram Drive server or any server collecting any information. Opening the website only downloads the app; everything you do after that is between **your browser**, **your device**, and **Telegram**.
+
+<p align="center"><strong>Your data is yours—that's our commitment.</strong></p>
 
 ---
 
