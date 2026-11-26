@@ -5,66 +5,124 @@
 <h1 align="center">Telegram Drive</h1>
 
 <p align="center">
-  A browser-based file explorer that treats a Telegram group as cloud storage.<br />
-  Folders and file listings live in structured metadata in the chat; file bytes live in Telegram messages.<br />
-  Sign in, pick a supergroup drive, and upload, organize, stream, and download—no separate backend.
+  Turn a Telegram group into your personal cloud drive—folders, uploads, downloads, and video playback, right in your browser.<br />
+  No extra server: your files stay in Telegram; the app only keeps your folder layout organized.
 </p>
 
 <p align="center">
-  <strong>Live demo:</strong> <a href="https://0xdsaini.github.io/telegramdrive">https://0xdsaini.github.io/telegramdrive</a>
+  <strong>Try it online:</strong> <a href="https://0xdsaini.github.io/telegramdrive">https://0xdsaini.github.io/telegramdrive</a>
 </p>
 
-## Prepare a group (supergroup) for your drive
+---
 
-Telegram Drive works best with a **supergroup**. Basic groups are limited; upgrading gives you stable chat history, higher limits, and a better fit for storing many files and metadata messages.
+## For new users — start here
 
-1. In Telegram (mobile or desktop), create a **private group** for your files, or open the group you want to use.
-2. You must be a **group admin** (creator or admin with permission to change group type).
-3. Open **Group settings** (tap the group name / header, or use the menu).
-4. Choose **Upgrade to supergroup** (wording may vary: *Convert to supergroup*).
-5. Confirm the upgrade. Telegram creates a supergroup linked to the old chat; members stay, but the chat is now a supergroup.
-6. In Telegram Drive, sign in and select that **supergroup** on the group picker screen.
+### What you need
 
-Use a dedicated group you do not mind filling with upload messages and the metadata JSON message. Avoid using a busy social group as your drive.
+- A **Telegram account** (same as the phone app).
+- A **Telegram group** you control, upgraded to a **supergroup** (see below). Use a group meant for files—not your main friends chat.
+- A modern **web browser** (Chrome, Firefox, Safari, Edge).
 
-## Features
+You do **not** need to install anything or write code to use the hosted demo link above.
 
-- **Virtual folders** — Create, rename, move, and delete folders; paths are reflected in the browser URL so you can bookmark or share a location.
-- **Upload & download** — Drag-and-drop or file picker; files are sent to the selected group and indexed in metadata. Download pulls the Telegram file back to your device.
-- **In-browser streaming** — Play videos and other streamable media through a YouTube-style player, backed by a progressive service worker and TDLib/MTProto file reads.
-- **Video thumbnails** — Posters are resolved from Telegram thumbs, cached locally (SQLite in the browser), or captured from stream when needed.
-- **Untracked media scan** — Find videos in chat history that are not yet listed in your folder tree and add them into the structure.
-- **Dry Mode (default on)** — Deleting a file in the UI removes it from metadata only; the Telegram message is left in place until you turn Dry Mode off. Safer for experimentation and recovery.
-- **Desktop keyboard navigation** — Arrow keys and shortcuts to move selection and open folders or media when a fine pointer is available.
-- **Mobile playback** — Full-screen style player, swipe down to dismiss, landscape orientation where supported.
+### Step 1 — Prepare your Telegram group (upgrade to supergroup)
 
-## How it works
+Telegram Drive works best with a **supergroup**. A normal small group hits limits quickly; a supergroup is what Telegram recommends for larger chats and lots of messages.
 
-1. **Authentication** — TDLib runs in the browser (via `tdweb` / GramJS-compatible client). You log in with phone number and OTP, same as official clients.
-2. **Group selection** — Pick an upgraded **supergroup** as your drive ([prepare your group](#prepare-a-group-supergroup-for-your-drive)). Chat ID and name are remembered in `localStorage`.
-3. **Metadata** — A dedicated message in that chat holds `metadata.json` (marked with `METADATA_STORAGE`). The app loads and updates this JSON to represent the folder tree and file names → message IDs.
-4. **File bodies** — Each tracked file points at a Telegram document message. Upload sends a new document; streaming and download read file parts through the client and service worker.
+1. Open **Telegram** on your phone or computer.
+2. Create a new **private group** for your files—or open the group you want to use.
+3. You must be the **owner or admin** of that group.
+4. Open **group settings** (tap the group name at the top, or open the ⋮ menu → **Manage group**).
+5. Tap **Upgrade to supergroup** (it may say *Convert to supergroup*).
+6. Confirm. The same people stay in the chat; Telegram just upgrades it behind the scenes.
 
-Nothing is stored on a custom server: persistence is Telegram plus browser-local session, thumbnail DB, and metadata caches.
+**Tip:** Pick a quiet group. The app will send file messages and one special “index” message into that chat.
 
-## Tech stack
+### Step 2 — Sign in and choose your drive
 
-| Layer | Choice |
+1. Open the [demo link](https://0xdsaini.github.io/telegramdrive).
+2. Enter your phone number (with country code, e.g. `+91…`) and the **login code** Telegram sends you—same as logging into Telegram elsewhere.
+3. Pick the **supergroup** you prepared. That group becomes your drive for this browser.
+4. Wait briefly while the app loads your folder tree from Telegram (**Syncing from Telegram…**).
+
+Your account stays on your device. All communication is between your browser and **Telegram’s servers**—no data goes to our servers (**we don’t have any**). Telegram Drive is just a tool in the browser to help organize your files. Tap **Log out** when you’re finished on this device.
+
+### Step 3 — Everyday use
+
+- **Folders** — Create folders and move files like a simple file manager.
+- **Upload** — Drag files into the page or use the upload button; they are sent into your Telegram group.
+- **Download** — Use download on a file to save it to your device.
+- **Watch videos** — Tap a video to play it in the built-in player (including on mobile).
+- **Dry Mode (on by default)** — When you “delete” a file in the app, it is removed from your folder list but **the message in Telegram is kept**. Turn Dry Mode **off** in group settings only when you truly want deletes to remove messages from the chat too.
+
+### If something goes wrong
+
+| What you see | What to try |
 | --- | --- |
-| UI | React 19, Create React App + CRACO |
-| Telegram | `telegram` (GramJS), TDLib Web (`tdweb`), custom MTProto shims |
-| Streaming | Service worker (`progressive-sw.js`), stream bridge utilities |
-| Local data | `sql.js` for thumbnail store, `localStorage` for preferences |
-| Deploy | GitHub Pages (`gh-pages` branch, CI on `main`) |
+| Video will not play | Refresh the page; open the site from the full link above (not a shortened URL). |
+| Stuck on “Syncing from Telegram…” | Check internet; make sure you picked the right group and you can send messages there. |
+| Login fails | Use `+` and country code; request a new code. |
+| Deleted files still in Telegram | **Dry Mode** is on—that is intentional. Turn it off only if you want real message deletion. |
 
-## Requirements
+---
 
-- **Node.js** 20+ (matches CI)
-- **npm** 9+
-- A **Telegram API application** — [my.telegram.org](https://my.telegram.org) → API development tools → `api_id` and `api_hash`
-- A Telegram account and a **supergroup** you admin, upgraded from a normal group and able to receive your uploads
+## What Telegram Drive can do (features)
 
-## Local development
+| Feature | In plain words | Technical note (optional) |
+| --- | --- | --- |
+| Folders | Create, rename, move, delete folders; bookmark a folder via the browser address bar | Paths sync to the URL (`explorerUrl`) |
+| Upload & download | Files go to your group; downloads pull from Telegram | Indexed in metadata; bodies are Telegram documents |
+| Video playback | YouTube-style player in the browser | Progressive streaming via service worker + TDLib/MTProto |
+| Thumbnails | Video cards show preview images when possible | Telegram thumbs, local cache (SQLite in browser), or captured from stream |
+| Untracked scan | Find videos already in the chat that are not in your folders yet | Chat history scan vs folder tree |
+| Dry Mode | Safer deletes: list only, unless you disable it | Default **on** |
+| Keyboard (desktop) | Arrow keys to move, shortcuts to open | Fine pointer / desktop layout |
+| Mobile player | Full-screen feel, swipe down to close | Orientation support where the browser allows |
+
+---
+
+## How it works (simple → detailed)
+
+**Simple version**
+
+1. You log in with Telegram in the browser.
+2. You choose one group—that is your drive.
+3. The app stores your **folder list** in a special JSON message in that chat (your “table of contents”).
+4. Each **file** in a folder points at a real file message in the same group.
+5. Nothing is stored on our own server—only Telegram and a bit of data saved in your browser (preferences, thumbnails).
+
+**Detailed version (for developers)**
+
+1. **Authentication** — TDLib runs in the browser (`tdweb` / GramJS-compatible client). Phone + OTP, same flow as official clients.
+2. **Group selection** — Use an upgraded **supergroup** ([prepare your group](#step-1--prepare-your-telegram-group-upgrade-to-supergroup)). Chat ID and name are saved in `localStorage`.
+3. **Metadata** — A dedicated chat message holds `metadata.json` (marked `METADATA_STORAGE`). The app reads/writes this JSON for the folder tree and file name → message ID map.
+4. **File bodies** — Uploads send new documents; streaming/download read file parts via the client and service worker.
+
+Persistence: Telegram + browser session, thumbnail DB, metadata caches—no custom backend.
+
+---
+
+## Safety and settings
+
+| Setting | What it means |
+| --- | --- |
+| **Dry Mode** (default **on**) | Delete in the app = remove from folders only; Telegram messages stay. Turn off only when you want messages deleted too. |
+| **Selected group** | Remembered in the browser until you log out. |
+| **Log out** | Signs you out of Telegram in this app and clears local caches and folder state on this device. |
+
+**Disclaimer:** This is not an official Telegram product. You sign in with your real account. Use a dedicated group, keep Dry Mode on until you trust deletes, and follow [Telegram’s terms](https://telegram.org/tos). API rate limits apply.
+
+---
+
+## For developers — run or change the code
+
+### Requirements
+
+- **Node.js** 20+ and **npm** 9+
+- Telegram **API ID** and **API hash** from [my.telegram.org](https://my.telegram.org) (for your own build)
+- A **supergroup** you admin (same as end users)
+
+### Run locally
 
 ```bash
 git clone <your-fork-url>
@@ -73,60 +131,42 @@ npm ci
 npm start
 ```
 
-Open [http://localhost:3000](http://localhost:3000). The dev server reloads on change.
+Open [http://localhost:3000](http://localhost:3000). The page reloads when you edit the code.
 
 ### Telegram API credentials
 
-Defaults live in `src/components/TelegramMessenger/constants.js`:
+Edit `src/components/TelegramMessenger/constants.js`:
 
 ```js
 export const TELEGRAM_API_ID = '…';
 export const TELEGRAM_API_HASH = '…';
 ```
 
-Replace these with your own `api_id` and `api_hash` before shipping a public fork. The repository may ship example or shared keys for the demo site only.
+Use your own keys for a public fork. The demo repo may ship shared keys for GitHub Pages only.
 
-### Tests
-
-```bash
-npm test
-```
-
-Runs Jest via CRACO (includes utilities such as `explorerKeyboardNav` and `fileStructureUtils`).
-
-## Production build
+### Tests, build, deploy
 
 ```bash
-npm run build
+npm test          # unit tests (Jest via CRACO)
+npm run build     # production output in build/
+npm run deploy    # build + publish to gh-pages branch
 ```
 
-Output is written to `build/`. For GitHub Pages, `package.json` sets `homepage` to the project path; local preview of the production bundle is awkward without serving `build` under that base path.
+**CI:** Push to `main` runs `.github/workflows/deploy-github-pages.yml` (build with `CI=false`, deploy with `peaceiris/actions-gh-pages`).
 
-## Deployment
+**GitHub Pages:** Use the configured base URL (e.g. `https://<user>.github.io/telegramdrive/`). Streaming needs that path; a URL without the trailing path segment can break the service worker until you navigate inside the app.
 
-**Manual (maintainer script):**
+### Tech stack
 
-```bash
-npm run deploy
-```
+| Layer | Choice |
+| --- | --- |
+| UI | React 19, Create React App + CRACO |
+| Telegram | `telegram` (GramJS), TDLib Web (`tdweb`), custom MTProto shims |
+| Streaming | Service worker (`progressive-sw.js`), stream bridge utilities |
+| Local data | `sql.js` (thumbnails), `localStorage` (preferences) |
+| Deploy | GitHub Pages (`gh-pages`, CI on `main`) |
 
-Runs `predeploy` → `build`, then publishes `build/` to the `gh-pages` branch with `gh-pages --nojekyll`.
-
-**CI:** Pushing to `main` runs `.github/workflows/deploy-github-pages.yml` (build with `CI=false`, then `peaceiris/actions-gh-pages`).
-
-After deploy, use the site only at the configured base URL (e.g. `https://<user>.github.io/telegramdrive/`). The service worker scope depends on that path; opening the bare `/telegramdrive` URL without a trailing slash can break streaming until you navigate to a path inside the app.
-
-## Configuration & safety
-
-| Setting | Where | Notes |
-| --- | --- | --- |
-| Dry Mode | Group selector / stored in `localStorage` | Default **enabled**; disable only if you intend to delete real Telegram messages when removing files |
-| Selected chat | `localStorage` | Cleared on logout |
-| Metadata message ID | `localStorage` (per chat) | Used to find the canonical metadata message |
-
-**Logout** signs out TDLib, clears local structure state, metadata message IDs, and downloaded file caches (see `TelegramContext`).
-
-## Project layout (high level)
+### Project layout
 
 ```
 src/
@@ -144,20 +184,16 @@ public/
   tdweb.js             TDLib WASM loader
 ```
 
-## Troubleshooting
+### Developer troubleshooting
 
 | Symptom | Things to try |
 | --- | --- |
-| Stream won’t start | Hard-refresh; ensure you’re on the GitHub Pages base URL with trailing path; check service worker registration in DevTools |
-| Stuck on “Syncing from Telegram…” | Confirm the group has a metadata message; network tab for TDLib errors |
-| Login fails | Verify API ID/hash; phone format with country code (`+…`) |
-| Deletes don’t remove chat files | Dry Mode is on (expected); toggle off only when you want message deletion |
+| Stream won’t start | Hard-refresh; correct GitHub Pages base URL; service worker in DevTools |
+| Stuck on “Syncing from Telegram…” | Metadata message in group; network tab for TDLib errors |
+| Login fails | API ID/hash; phone with `+` country code |
+| Deletes don’t remove chat files | Dry Mode on (expected) |
 
-## Disclaimer
-
-This is an unofficial client. It uses your Telegram account and API credentials in the browser. Use a dedicated group, keep Dry Mode on until you trust deletes, and do not commit private API keys or session data. Telegram’s terms of service and rate limits apply.
-
-## Scripts reference
+### Scripts reference
 
 | Command | Description |
 | --- | --- |
