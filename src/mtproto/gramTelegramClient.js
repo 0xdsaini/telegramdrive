@@ -16,6 +16,9 @@ export async function createGramTelegramClient() {
 
   const gram = new TelegramClient(session, apiId, apiHash, {
     connectionRetries: 8,
+    requestRetries: 5,
+    /** Avoid ~10s connect stalls that showed up as periodic upload throttling in Activity Monitor */
+    timeout: 60,
     useWSS: true,
   });
 

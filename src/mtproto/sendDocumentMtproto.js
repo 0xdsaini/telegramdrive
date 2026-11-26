@@ -2,7 +2,6 @@ import { Api } from 'telegram';
 import { utils } from 'telegram';
 import { uploadBrowserFileMtproto } from './uploadFileMtproto';
 import { registerDocumentFromMessage } from './documentRegistry';
-import { UPLOAD_WORKERS } from './downloadConcurrency';
 
 /**
  * Send a document message using parallel MTProto upload (Web K / telegram-tt style).
@@ -12,11 +11,10 @@ import { UPLOAD_WORKERS } from './downloadConcurrency';
  * @param {{ onProgress?: Function, thumb?: Blob | File | null, workers?: number }} [opts]
  */
 export async function sendDocumentMtproto(gram, chatId, file, opts = {}) {
-  const { onProgress, thumb, workers = UPLOAD_WORKERS } = opts;
+  const { onProgress, thumb } = opts;
 
   const fileHandle = await uploadBrowserFileMtproto(gram, file, {
     onProgress,
-    workers,
     fileName: file.name,
   });
 
@@ -27,7 +25,6 @@ export async function sendDocumentMtproto(gram, chatId, file, opts = {}) {
         ? thumb
         : new File([thumb], 'thumb.jpg', { type: thumb.type || 'image/jpeg' });
     uploadedThumb = await uploadBrowserFileMtproto(gram, thumbFile, {
-      workers: Math.min(4, UPLOAD_WORKERS),
       fileName: thumbFile.name,
     });
   }
