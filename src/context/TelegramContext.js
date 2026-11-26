@@ -2,6 +2,7 @@ import React, { createContext, useState, useEffect, useContext } from 'react';
 import { createEmptyFileStructure } from '../utils/fileStructureUtils';
 import { clearGramSession } from '../mtproto/gramTelegramClient';
 import { clearDocumentRegistry } from '../mtproto/documentRegistry';
+import { clearMetadataMessageIdsFromLocalStorage } from '../utils/metadataStorageMessage';
 
 // Constants for localStorage keys
 const SELECTED_CHAT_KEY = 'telegram-selected-chat';
@@ -115,7 +116,7 @@ export const TelegramProvider = ({ children }) => {
       localStorage.removeItem(SELECTED_CHAT_KEY);
       localStorage.removeItem(SELECTED_CHAT_NAME_KEY);
       // Clear message ID from localStorage
-      localStorage.removeItem('telegram-metadata-message-id'); //NOTICE: This is problematic. hardcoding should not be there.
+      clearMetadataMessageIdsFromLocalStorage();
       clearGramSession();
       clearDocumentRegistry();
       

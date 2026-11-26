@@ -14,23 +14,35 @@ import ChatGroupSelector from '../ChatGroupSelector/ChatGroupSelector';
 import { TelegramContext } from '../../context/TelegramContext';
 import { runChatStorageBootstrap } from '../../utils/chatBootstrap';
 import { debugLog, isAppDebugEnabled } from '../../utils/appDebug';
+import {
+  METADATA_MARKER,
+  METADATA_FILENAME,
+  isMetadataStorageMessage,
+  pickCanonicalMetadataMessage,
+  readSavedMetadataMessageId,
+  rememberMetadataMessageId,
+} from '../../utils/metadataStorageMessage';
 import './TelegramMessenger.css';
 
-const METADATA_MARKER = 'METADATA_STORAGE';
-
-function isMetadataStorageMessage(message) {
-  if (!message?.content) {
-    return false;
+function decodeFilePartAsUtf8(data) {
+  if (!data) {
+    return '';
   }
-  const textBody = message.content.text?.text;
-  if (textBody?.includes(METADATA_MARKER)) {
-    return true;
+  if (typeof data === 'string') {
+    return data;
   }
-  const caption = message.content.caption?.text;
-  if (caption?.includes(METADATA_MARKER)) {
-    return true;
+  if (typeof Buffer !== 'undefined' && Buffer.isBuffer(data)) {
+    return data.toString('utf8');
   }
-  return message.content.document?.file_name === 'metadata.json';
+  if (data instanceof Uint8Array) {
+    return new TextDecoder('utf-8').decode(data);
+  }
+  if (ArrayBuffer.isView(data)) {
+    return new TextDecoder('utf-8').decode(
+      new Uint8Array(data.buffer, data.byteOffset, data.byteLength),
+    );
+  }
+  return String(data);
 }
 
 const TelegramMessenger = () => {
@@ -71,13 +83,10 @@ const TelegramMessenger = () => {
     setAvailableChats
   } = useContext(TelegramContext);
   
-  // Constants for localStorage keys
-  const MESSAGE_ID_KEY = 'telegram-metadata-message-id';
-  
   // Helpers function to create File Blob from text
   const createMetadataFile = (metadataText) => {
     const blob = new Blob([metadataText], { type: 'application/json' });
-    return new File([blob], 'metadata.json', { type: 'application/json' });
+    return new File([blob], METADATA_FILENAME, { type: 'application/json' });
   };
 
   const downloadFileandExtractMetadata = async (messageId) => {
@@ -114,9 +123,10 @@ const TelegramMessenger = () => {
       try {
         console.log('Falling back to getChatHistory for METADATA_STORAGE...');
         let fromMessageId = 0;
-        const maxAttempts = 5;
+        const maxAttempts = 8;
+        const historyMatches = [];
 
-        for (let attempt = 0; attempt < maxAttempts && !foundMessage; attempt++) {
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
           const historyResult = await client.send({
             '@type': 'getChatHistory',
             chat_id: selectedChatId,
@@ -132,19 +142,22 @@ const TelegramMessenger = () => {
 
           fromMessageId =
             historyResult.messages[historyResult.messages.length - 1].id;
-          foundMessage = historyResult.messages.find(isMetadataStorageMessage);
-
-          if (foundMessage) {
-            foundId = foundMessage.id;
-            console.log(
-              'Found METADATA_STORAGE message with getChatHistory, ID:',
-              foundId,
-            );
-          }
+          historyMatches.push(
+            ...(historyResult.messages ?? []).filter(isMetadataStorageMessage),
+          );
 
           if (historyResult.messages.length < 50) {
             break;
           }
+        }
+
+        foundMessage = pickCanonicalMetadataMessage(historyMatches);
+        if (foundMessage) {
+          foundId = foundMessage.id;
+          console.log(
+            'Found METADATA_STORAGE message with getChatHistory, ID:',
+            foundId,
+          );
         }
       } catch (historyError) {
         console.error('Error with getChatHistory:', historyError);
@@ -181,9 +194,7 @@ const TelegramMessenger = () => {
       count: size > 0 ? size : 1024 * 1024,
     });
 
-    const text = part?.data
-      ? (typeof part.data === 'string' ? part.data : part.data.toString('utf8'))
-      : '';
+    const text = decodeFilePartAsUtf8(part?.data);
 
     console.log('Metadata JSON loaded via MTProto, bytes:', text.length);
 
@@ -197,16 +208,21 @@ const TelegramMessenger = () => {
 
   // Find message with METADATA_STORAGE prefix to enable message editing
   const findMessageId = useCallback(async () => {
-    if (!clientRef.current || !getChatsPromiseRef.current || !selectedChatId) return null;
-    
+    if (!clientRef.current || !selectedChatId) {
+      setFileStructure(createEmptyFileStructure());
+      setIsFileStructureLoaded(true);
+      return null;
+    }
+
     try {
-      // Wait for the getChats promise to resolve
-      await getChatsPromiseRef.current;
+      if (getChatsPromiseRef.current) {
+        await getChatsPromiseRef.current;
+      }
       console.log("Searching for METADATA_STORAGE message...");
       
       console.log("Trying...localStorage first.")
       // First try to get message_id from localStorage
-      const savedMessageId = localStorage.getItem(MESSAGE_ID_KEY);
+      const savedMessageId = readSavedMetadataMessageId(selectedChatId);
       if (savedMessageId) {
         console.log("Found saved message ID in localStorage:", savedMessageId);
         try {
@@ -222,6 +238,7 @@ const TelegramMessenger = () => {
             const numericId = parseInt(savedMessageId, 10);
             setMessageId(numericId);
             setContextMessageId(numericId);
+            rememberMetadataMessageId(selectedChatId, numericId);
 
             try {
               if (messageResult.content?.document) {
@@ -259,44 +276,56 @@ const TelegramMessenger = () => {
         const searchResult = await clientRef.current.send({
           "@type": "searchChatMessages",
           "chat_id": selectedChatId,
-          "query": "METADATA_STORAGE",
-          "limit": 5,
+          "query": METADATA_MARKER,
+          "limit": 50,
           "from_message_id": 0,
           "offset": 0,
           "only_missed": false
         });
-        
-        if (searchResult.messages && searchResult.messages.length > 0) {
-          const foundId = searchResult.messages[0].id;
+
+        let canonical = pickCanonicalMetadataMessage(searchResult?.messages);
+        if (!canonical) {
+          const byFileName = await clientRef.current.send({
+            '@type': 'searchChatMessages',
+            chat_id: selectedChatId,
+            query: METADATA_FILENAME,
+            limit: 50,
+            from_message_id: 0,
+            offset: 0,
+            only_missed: false,
+          });
+          canonical = pickCanonicalMetadataMessage(byFileName?.messages);
+        }
+
+        if (canonical) {
+          const foundId = canonical.id;
           console.log("Found METADATA_STORAGE message with searchChatMessages, ID:", foundId);
           setMessageId(foundId);
           setContextMessageId(foundId);
-          localStorage.setItem(MESSAGE_ID_KEY, foundId.toString());
-          
-          // Load file structure from message
+          rememberMetadataMessageId(selectedChatId, foundId);
+
           try {
-            if (true) {
-              const result = await downloadFileandExtractMetadata(foundId);
-              console.log("downloadFileandExtractMetadata(inside findMessageId->searchChatMessages)", result.text, typeof result.text);
-              const parsedStructure = loadFileStructureFromTelegram(
-                result.text,
-                result.editDateUnix
-              );
-              console.log("Loaded file structure:", parsedStructure);
-              setFileStructure(parsedStructure);
-              setIsFileStructureLoaded(true);
-            }
+            const result = await downloadFileandExtractMetadata(foundId);
+            console.log(
+              "downloadFileandExtractMetadata(inside findMessageId->searchChatMessages)",
+              result.text,
+              typeof result.text,
+            );
+            const parsedStructure = loadFileStructureFromTelegram(
+              result.text,
+              result.editDateUnix,
+            );
+            console.log("Loaded file structure:", parsedStructure);
+            setFileStructure(parsedStructure);
+            setIsFileStructureLoaded(true);
             return foundId;
           } catch (error) {
             console.error("Error loading file structure:", error);
             setFileStructure(createEmptyFileStructure());
             setIsFileStructureLoaded(true);
           }
-          
-
         } else {
           console.log("No METADATA_STORAGE messages found with searchChatMessages");
-          // Continue to fallback method
         }
       } catch (searchError) {
         console.error('Error with searchChatMessages:', searchError);
@@ -306,73 +335,64 @@ const TelegramMessenger = () => {
       // Method 2: Fallback to getChatHistory if searchChatMessages fails
       try {
         console.log("Falling back to getChatHistory...");
-        let foundMessage = null;
         let fromMessageId = 0;
-        const maxAttempts = 5; // NOTICE: Adjust this later if number of messages starts getting somewhat high(currently, per attempt=50 messages, 5 attempts = 50*5 = 250 messages it'll retrieve only. If your METADATA_STORAGE message is in the beginning of the chat, and you have more than 250 messages after that, you'll miss that METADATA_STORAGE message. If you expect a lot of messages, you SHOULD increase this limit. And this will definitely happen as you start storing files in it more and more and more.)
-        
-        for (let attempt = 0; attempt < maxAttempts && !foundMessage; attempt++) {
+        const maxAttempts = 8;
+        const historyMatches = [];
+
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
           const historyResult = await clientRef.current.send({
             "@type": "getChatHistory",
             "chat_id": selectedChatId,
             "from_message_id": fromMessageId,
             "offset": 0,
-            "limit": 50, // Get 50 messages at a time
+            "limit": 50,
             "only_local": false
           });
-          
-          if (historyResult.messages && historyResult.messages.length > 0) {
-            // Update fromMessageId for next iteration if needed
-            fromMessageId = historyResult.messages[historyResult.messages.length - 1].id;
-            
-            // Search for METADATA_STORAGE in the messages
-            foundMessage = historyResult.messages.find(msg => 
-              msg.content && 
-              msg.content.caption && 
-              msg.content.caption.text && 
-              msg.content.caption.text.includes("METADATA_STORAGE")
-            );
-            
-            if (foundMessage) {
-              const foundId = foundMessage.id;
-              console.log("Found METADATA_STORAGE message with getChatHistory, ID:", foundId);
-              setMessageId(foundId);
-              setContextMessageId(foundId);
-              localStorage.setItem(MESSAGE_ID_KEY, foundId.toString());
-              
-              // Load file structure from message
-              try {
-                if (true) {
-                  const result = await downloadFileandExtractMetadata(foundId);
-                  console.log("downloadFileandExtractMetadata(inside findMessageId->getChatHistory)", result.text, typeof result.text);
-                  const parsedStructure = loadFileStructureFromTelegram(
-                    result.text,
-                    result.editDateUnix
-                  );
-                  console.log("Loaded file structure:", parsedStructure);
-                  setFileStructure(parsedStructure);
-                  setIsFileStructureLoaded(true);
-                }
 
-                return foundId;
+          if (!historyResult.messages?.length) {
+            break;
+          }
 
-              } catch (error) {
-                console.error("Error loading file structure:", error);
-                setFileStructure(createEmptyFileStructure());
-                setIsFileStructureLoaded(true);
-              }
-            }
-            
-            // If we got fewer messages than requested, we've reached the end
-            if (historyResult.messages.length < 50) {
-              break;
-            }
-          } else {
-            // No more messages to check
+          fromMessageId = historyResult.messages[historyResult.messages.length - 1].id;
+          historyMatches.push(
+            ...(historyResult.messages ?? []).filter(isMetadataStorageMessage),
+          );
+
+          if (historyResult.messages.length < 50) {
             break;
           }
         }
-        
-        // If we get here, we didn't find the message
+
+        const foundMessage = pickCanonicalMetadataMessage(historyMatches);
+        if (foundMessage) {
+          const foundId = foundMessage.id;
+          console.log("Found METADATA_STORAGE message with getChatHistory, ID:", foundId);
+          setMessageId(foundId);
+          setContextMessageId(foundId);
+          rememberMetadataMessageId(selectedChatId, foundId);
+
+          try {
+            const result = await downloadFileandExtractMetadata(foundId);
+            console.log(
+              "downloadFileandExtractMetadata(inside findMessageId->getChatHistory)",
+              result.text,
+              typeof result.text,
+            );
+            const parsedStructure = loadFileStructureFromTelegram(
+              result.text,
+              result.editDateUnix,
+            );
+            console.log("Loaded file structure:", parsedStructure);
+            setFileStructure(parsedStructure);
+            setIsFileStructureLoaded(true);
+            return foundId;
+          } catch (error) {
+            console.error("Error loading file structure:", error);
+            setFileStructure(createEmptyFileStructure());
+            setIsFileStructureLoaded(true);
+          }
+        }
+
         console.log("No METADATA_STORAGE messages found with getChatHistory");
         setFileStructure(createEmptyFileStructure());
         setIsFileStructureLoaded(true);
@@ -685,7 +705,7 @@ const TelegramMessenger = () => {
             },
             'caption': {
               '@type': 'formattedText',
-              'text': 'METADATA_STORAGE',
+              'text': METADATA_MARKER,
             },
           },
         }),
@@ -749,7 +769,7 @@ const TelegramMessenger = () => {
       // If this is a METADATA_STORAGE message, ensure its ID is saved to localStorage
       if (newMessage.includes("METADATA_STORAGE")) {
         console.log("Ensuring METADATA_STORAGE message ID is saved to localStorage:", message_id);
-        localStorage.setItem(MESSAGE_ID_KEY, message_id.toString());
+        rememberMetadataMessageId(selectedChatId, message_id);
       }
       
       // Reset status after 3 seconds
@@ -814,7 +834,7 @@ const TelegramMessenger = () => {
         if (result && result.id && !messageId) {
           setMessageId(result.id);
           setContextMessageId(result.id);
-          localStorage.setItem(MESSAGE_ID_KEY, result.id.toString());
+          rememberMetadataMessageId(selectedChatId, result.id);
         }
       }
 
@@ -861,7 +881,7 @@ const TelegramMessenger = () => {
           },
             'caption': {
               '@type': 'formattedText',
-              'text': 'METADATA_STORAGE'
+              'text': METADATA_MARKER
             }
         }
       });

@@ -8,6 +8,20 @@ import {
   refreshDocumentFileReference,
 } from './refreshDocumentReference';
 
+function inputMessageCaption(input) {
+  const caption = input?.caption;
+  if (!caption) {
+    return '';
+  }
+  if (typeof caption.text === 'string') {
+    return caption.text;
+  }
+  if (typeof caption.formatted_text?.text === 'string') {
+    return caption.formatted_text.text;
+  }
+  return '';
+}
+
 /** GramJS CustomFile must hold a Buffer; TDLib shim passes browser File/Blob in inputFileBlob. */
 async function inputBlobToCustomFile(data, name) {
   const fileName = name || 'file';
@@ -220,7 +234,7 @@ export function createTdlibCompatShim(gram, { apiId, apiHash, saveSession, onAut
             );
             const sent = await gram.sendFile(req.chat_id, {
               file,
-              caption: '',
+              caption: inputMessageCaption(input),
               forceDocument: true,
             });
             return { '@type': 'message', id: sent.id };
@@ -250,6 +264,7 @@ export function createTdlibCompatShim(gram, { apiId, apiHash, saveSession, onAut
             await gram.editMessage(req.chat_id, {
               message: req.message_id,
               file,
+              caption: inputMessageCaption(input),
               forceDocument: true,
             });
             return { '@type': 'ok' };

@@ -1,4 +1,6 @@
-const METADATA_MARKER = 'METADATA_STORAGE';
+import { isMetadataStorageMessage } from './metadataStorageMessage';
+
+export { isMetadataStorageMessage };
 
 const MIME_TO_EXT = {
   'video/mp4': '.mp4',
@@ -11,10 +13,6 @@ const MIME_TO_EXT = {
 export function getContentCaptionText(content) {
   const text = content?.caption?.text;
   return typeof text === 'string' ? text.trim() : '';
-}
-
-export function isMetadataStorageMessage(message) {
-  return getContentCaptionText(message?.content).includes(METADATA_MARKER);
 }
 
 function extensionFromVideoContent(content) {
