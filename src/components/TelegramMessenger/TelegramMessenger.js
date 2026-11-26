@@ -8,6 +8,7 @@ import {
   stampFileStructureUpdatedAt,
   ensureMetadataUpdatedAtFromTelegram,
   mergeFileStructures,
+  ensureFolderIds,
 } from '../../utils/fileStructureUtils';
 
 import React, { useState, useEffect, useRef, useCallback, useContext } from 'react';
@@ -766,11 +767,15 @@ const TelegramMessenger = () => {
             'Remote metadata is newer; merging with local changes before save.',
             { localTs, remoteTs },
           );
-          updatedStructure = mergeFileStructures(remoteStructure, updatedStructure);
+          updatedStructure = mergeFileStructures(remoteStructure, updatedStructure, {
+            nameWinsFrom: 'remote',
+          });
         }
       }
 
-      const stampedStructure = stampFileStructureUpdatedAt(updatedStructure);
+      const stampedStructure = stampFileStructureUpdatedAt(
+        ensureFolderIds(updatedStructure),
+      );
       setFileStructure(stampedStructure);
 
       const messageText = serializeFileStructure(stampedStructure);

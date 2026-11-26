@@ -49,6 +49,7 @@ import {
   renameFolder,
   moveFolder,
   addFile,
+  addFileByFolderId,
   deleteFile,
   moveFile,
 } from '../../utils/fileStructureUtils';
@@ -968,9 +969,14 @@ const FileExplorer = () => {
             },
           );
 
-          workingStructure = addFile(
+          if (entry.targetFolderId == null) {
+            setError(`Skipped ${entry.filename}: missing folder id in upload plan.`);
+            continue;
+          }
+
+          workingStructure = addFileByFolderId(
             workingStructure,
-            entry.targetFolderPath,
+            entry.targetFolderId,
             entry.filename,
             messageId,
           );

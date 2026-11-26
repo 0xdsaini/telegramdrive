@@ -2,12 +2,69 @@
  * Utility functions for managing file structure in Telegram messages
  */
 
+/** Root folder stable id (compact integer in metadata JSON). */
+export const ROOT_FOLDER_ID = 1;
+
+const numericFolderId = (value) => {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : null;
+};
+
+/**
+ * @param {Object} node
+ * @returns {number}
+ */
+export const getMaxFolderId = (node) => {
+  if (!node) {
+    return ROOT_FOLDER_ID;
+  }
+  let max = numericFolderId(node.id) ?? ROOT_FOLDER_ID;
+  for (const sub of node.subfolders || []) {
+    max = Math.max(max, getMaxFolderId(sub));
+  }
+  return max;
+};
+
+/**
+ * Assign missing folder ids (legacy metadata). Mutates in place.
+ * @param {Object} fileStructure
+ * @returns {Object}
+ */
+export const ensureFolderIds = (fileStructure) => {
+  if (!fileStructure) {
+    return createEmptyFileStructure();
+  }
+  let next = getMaxFolderId(fileStructure);
+  const walk = (node) => {
+    if (!numericFolderId(node.id)) {
+      node.id = node.name === '/' ? ROOT_FOLDER_ID : (next += 1);
+    } else {
+      node.id = numericFolderId(node.id);
+    }
+    for (const sub of node.subfolders || []) {
+      walk(sub);
+    }
+  };
+  if (!numericFolderId(fileStructure.id)) {
+    fileStructure.id = ROOT_FOLDER_ID;
+  }
+  walk(fileStructure);
+  return fileStructure;
+};
+
+/**
+ * @param {Object} fileStructure
+ * @returns {number}
+ */
+export const allocateFolderId = (fileStructure) => getMaxFolderId(fileStructure) + 1;
+
 /**
  * Creates an empty file structure with root directory
  * @returns {Object} Empty file structure
  */
 export const createEmptyFileStructure = () => {
   return {
+    id: ROOT_FOLDER_ID,
     name: "/",
     subfolders: [],
     files: []
@@ -41,14 +98,30 @@ export const stampFileStructureUpdatedAt = (fileStructure, date = new Date()) =>
 };
 
 /**
- * Deep-merge folder trees; local wins on file/folder name conflicts (keeps in-flight uploads).
+ * Deep-merge folder trees. Files: local wins on same filename. Subfolders match by stable `id`
+ * when present; display `name` follows `nameWinsFrom` when both sides exist.
  * @param {Object} remote
  * @param {Object} local
+ * @param {{ nameWinsFrom?: 'local' | 'remote' }} [options]
  * @returns {Object}
  */
-export const mergeFileStructures = (remote, local) => {
+export const mergeFileStructures = (remote, local, options = {}) => {
   if (!remote) return local;
   if (!local) return remote;
+
+  const nameWinsFrom = options.nameWinsFrom === 'remote' ? 'remote' : 'local';
+
+  const pickFolderName = (remoteFolder, localFolder) => {
+    if (!remoteFolder) return localFolder?.name;
+    if (!localFolder) return remoteFolder?.name;
+    return nameWinsFrom === 'remote' ? remoteFolder.name : localFolder.name;
+  };
+
+  const pickFolderId = (remoteFolder, localFolder) => (
+    numericFolderId(localFolder?.id)
+      ?? numericFolderId(remoteFolder?.id)
+      ?? undefined
+  );
 
   const mergeFolder = (remoteFolder, localFolder) => {
     if (!remoteFolder) return localFolder;
@@ -62,23 +135,49 @@ export const mergeFileStructures = (remote, local) => {
       if (file?.filename) fileMap.set(file.filename, { ...file });
     }
 
-    const subByName = new Map();
+    const byId = new Map();
+    const legacyByName = new Map();
+
     for (const sub of remoteFolder.subfolders || []) {
-      if (sub?.name) subByName.set(sub.name, sub);
+      const id = numericFolderId(sub?.id);
+      if (id != null) {
+        const slot = byId.get(id) || { remote: null, local: null };
+        slot.remote = sub;
+        byId.set(id, slot);
+      } else if (sub?.name) {
+        const slot = legacyByName.get(sub.name) || { remote: null, local: null };
+        slot.remote = sub;
+        legacyByName.set(sub.name, slot);
+      }
     }
     for (const sub of localFolder.subfolders || []) {
-      if (sub?.name) {
-        const existing = subByName.get(sub.name);
-        subByName.set(sub.name, mergeFolder(existing, sub));
+      const id = numericFolderId(sub?.id);
+      if (id != null) {
+        const slot = byId.get(id) || { remote: null, local: null };
+        slot.local = sub;
+        byId.set(id, slot);
+      } else if (sub?.name) {
+        const slot = legacyByName.get(sub.name) || { remote: null, local: null };
+        slot.local = sub;
+        legacyByName.set(sub.name, slot);
       }
+    }
+
+    const mergedSubfolders = [];
+    for (const [, slot] of byId) {
+      mergedSubfolders.push(mergeFolder(slot.remote, slot.local));
+    }
+    for (const [, slot] of legacyByName) {
+      mergedSubfolders.push(mergeFolder(slot.remote, slot.local));
     }
 
     return {
       ...remoteFolder,
       ...localFolder,
-      name: localFolder.name ?? remoteFolder.name,
+      id: pickFolderId(remoteFolder, localFolder) ?? remoteFolder.id ?? localFolder.id,
+      name: pickFolderName(remoteFolder, localFolder) ?? remoteFolder.name,
       files: Array.from(fileMap.values()),
-      subfolders: Array.from(subByName.values()),
+      subfolders: mergedSubfolders,
     };
   };
 
@@ -127,8 +226,8 @@ export const parseFileStructure = (messageText) => {
     if (!fileStructure.name || !Array.isArray(fileStructure.subfolders) || !Array.isArray(fileStructure.files)) {
       return createEmptyFileStructure();
     }
-    
-    return fileStructure;
+
+    return ensureFolderIds(fileStructure);
   } catch (error) {
     console.error('Error parsing file structure:', error);
     return createEmptyFileStructure();
@@ -206,6 +305,28 @@ export const findFolderByPath = (fileStructure, path) => {
 };
 
 /**
+ * @param {Object} fileStructure
+ * @param {number} folderId
+ * @returns {Object|null}
+ */
+export const findFolderById = (fileStructure, folderId) => {
+  const want = numericFolderId(folderId);
+  if (want == null || !fileStructure) {
+    return null;
+  }
+  if (numericFolderId(fileStructure.id) === want) {
+    return fileStructure;
+  }
+  for (const sub of fileStructure.subfolders || []) {
+    const found = findFolderById(sub, want);
+    if (found) {
+      return found;
+    }
+  }
+  return null;
+};
+
+/**
  * Creates a new folder in the file structure
  * @param {Object} fileStructure - The file structure object
  * @param {string} parentPath - Path to the parent folder
@@ -225,8 +346,8 @@ export const createFolder = (fileStructure, parentPath, folderName) => {
     return fileStructure;
   }
   
-  // Create new folder
   parent.subfolders.push({
+    id: allocateFolderId(fileStructure),
     name: folderName,
     subfolders: [],
     files: []
@@ -392,22 +513,35 @@ export const addFile = (fileStructure, folderPath, filename, messageId) => {
     console.error(`Folder not found: ${folderPath}`);
     return fileStructure;
   }
+  return addFileToFolder(fileStructure, folder, filename, messageId);
+};
 
+/**
+ * Add a file by stable folder id (survives renames during in-flight uploads).
+ */
+export const addFileByFolderId = (fileStructure, folderId, filename, messageId) => {
+  const folder = findFolderById(fileStructure, folderId);
+  if (!folder) {
+    console.error(`Folder not found for id: ${folderId}`);
+    return fileStructure;
+  }
+  return addFileToFolder(fileStructure, folder, filename, messageId);
+};
+
+function addFileToFolder(fileStructure, folder, filename, messageId) {
   const numericMessageId = Number(messageId);
   if (!Number.isFinite(numericMessageId)) {
     console.error(`Invalid message_id for addFile: ${messageId}`);
     return fileStructure;
   }
 
-  // inode === message_id: TDLib message ids are unique within a chat (chat_id + message_id).
   const entry = {
     inode: numericMessageId,
     filename,
     message_id: numericMessageId,
   };
 
-  // Check if file already exists
-  const existingFileIndex = folder.files.findIndex(f => f.filename === filename);
+  const existingFileIndex = folder.files.findIndex((f) => f.filename === filename);
   if (existingFileIndex !== -1) {
     folder.files[existingFileIndex] = entry;
   } else {
@@ -415,7 +549,7 @@ export const addFile = (fileStructure, folderPath, filename, messageId) => {
   }
 
   return fileStructure;
-};
+}
 
 /**
  * Deletes a file from the file structure

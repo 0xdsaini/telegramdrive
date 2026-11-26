@@ -48,6 +48,9 @@ describe('planFolderUpload', () => {
     expect(plan.entries).toHaveLength(2);
     expect(plan.entries[0].targetFolderPath).toBe('/Bundle');
     expect(plan.entries[1].targetFolderPath).toBe('/Bundle/sub');
+    expect(plan.entries[0].targetFolderId).toBe(
+      findFolderByPath(plan.structureWithFolders, '/Bundle').id,
+    );
     expect(findFolderByPath(plan.structureWithFolders, '/Bundle/sub')).not.toBeNull();
   });
 

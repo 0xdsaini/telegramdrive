@@ -1,5 +1,6 @@
 import {
   createFolder,
+  findFolderById,
   findFolderByPath,
 } from './fileStructureUtils';
 import { findOversizedUploadFiles } from './telegramDocumentUpload';
@@ -79,7 +80,7 @@ const chainKey = (segments) => segments.join('\0');
  * @param {File[]} files - from <input webkitdirectory>
  * @returns {{
  *   ok: true,
- *   entries: { file: File, filename: string, targetFolderPath: string }[],
+ *   entries: { file: File, filename: string, targetFolderPath: string, targetFolderId: number }[],
  *   resolvedRootName: string,
  *   originalRootName: string,
  *   structureWithFolders: Object,
@@ -156,9 +157,17 @@ export const planFolderUpload = (fileStructure, currentPath, files) => {
     [...chains.values()],
   );
 
+  const entriesWithIds = entries.map((entry) => {
+    const folder = findFolderByPath(structureWithFolders, entry.targetFolderPath);
+    return {
+      ...entry,
+      targetFolderId: folder?.id,
+    };
+  });
+
   return {
     ok: true,
-    entries,
+    entries: entriesWithIds,
     resolvedRootName,
     originalRootName,
     structureWithFolders,
@@ -173,7 +182,10 @@ export const planFolderUpload = (fileStructure, currentPath, files) => {
 export const findFolderUploadFileCollisions = (fileStructure, entries) => {
   const collisions = [];
   for (const entry of entries) {
-    const folder = findFolderByPath(fileStructure, entry.targetFolderPath);
+    const folder =
+      entry.targetFolderId != null
+        ? findFolderById(fileStructure, entry.targetFolderId)
+        : findFolderByPath(fileStructure, entry.targetFolderPath);
     if (!folder) {
       continue;
     }
