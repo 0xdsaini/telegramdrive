@@ -75,6 +75,21 @@ describe('planFolderUpload', () => {
     expect(plan.ok).toBe(false);
     expect(plan.reason).toBe('oversized');
   });
+
+  it('skips dot files and paths under hidden segments', () => {
+    const tree = createEmptyFileStructure();
+    const files = [
+      makeFile('ok.txt', 'Bundle/ok.txt'),
+      makeFile('.env', 'Bundle/.env'),
+      makeFile('secret', 'Bundle/.hidden/secret'),
+      makeFile('.DS_Store', 'Bundle/.DS_Store'),
+    ];
+
+    const plan = planFolderUpload(tree, '/', files);
+    expect(plan.ok).toBe(true);
+    expect(plan.entries).toHaveLength(1);
+    expect(plan.entries[0].filename).toBe('ok.txt');
+  });
 });
 
 describe('ensureFolderSegmentChains', () => {

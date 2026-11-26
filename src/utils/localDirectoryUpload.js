@@ -1,4 +1,5 @@
 import { folderUploadDebug, folderUploadDebugError } from './folderUploadDebug';
+import { pathHasHiddenSegment } from './folderUpload';
 
 export const FOLDER_UPLOAD_PICKER_ID = 'telegram-drive-folder-upload-v1';
 
@@ -63,6 +64,10 @@ const fileEntryToUploadFile = (fileEntry, relativePath) =>
  * @param {string} pathInsideRoot path under the selected root, no leading slash
  */
 const walkDroppedEntry = async (entry, originalRootName, pathInsideRoot) => {
+  if (entry.name?.startsWith('.')) {
+    return { files: [], emptyDirectoryPaths: [] };
+  }
+
   if (entry.isFile) {
     const rel = pathInsideRoot
       ? `${originalRootName}/${pathInsideRoot}/${entry.name}`
@@ -79,13 +84,17 @@ const walkDroppedEntry = async (entry, originalRootName, pathInsideRoot) => {
   const children = await readAllDirectoryEntries(reader);
 
   if (children.length === 0) {
-    const emptyDirectoryPaths = pathInsideRoot ? [pathInsideRoot] : [];
+    const emptyDirectoryPaths =
+      pathInsideRoot && !pathHasHiddenSegment(pathInsideRoot) ? [pathInsideRoot] : [];
     return { files: [], emptyDirectoryPaths };
   }
 
   const files = [];
   const emptyDirectoryPaths = [];
   for (const child of children) {
+    if (child.name?.startsWith('.')) {
+      continue;
+    }
     const childPath = pathInsideRoot ? `${pathInsideRoot}/${child.name}` : child.name;
     const nested = await walkDroppedEntry(child, originalRootName, childPath);
     files.push(...nested.files);
@@ -157,13 +166,16 @@ export const collectLocalDirectoryForUpload = async (directoryHandle) => {
     }
 
     if (children.length === 0) {
-      if (pathInsideRoot) {
+      if (pathInsideRoot && !pathHasHiddenSegment(pathInsideRoot)) {
         emptyDirectoryPaths.push(pathInsideRoot);
       }
       return;
     }
 
     for (const entry of children) {
+      if (entry.name?.startsWith('.')) {
+        continue;
+      }
       const childPath = pathInsideRoot ? `${pathInsideRoot}/${entry.name}` : entry.name;
       if (entry.kind === 'directory') {
         await walk(entry, childPath);

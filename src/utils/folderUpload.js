@@ -73,6 +73,23 @@ export const ensureFolderSegmentChains = (fileStructure, basePath, segmentChains
 
 const chainKey = (segments) => segments.join('\0');
 
+/** Any path segment starting with "." (e.g. `.env`, `.git/config`, `.filename`). */
+export const pathHasHiddenSegment = (relativePath) => {
+  const segments = String(relativePath || '').split('/').filter(Boolean);
+  return segments.some((seg) => seg.startsWith('.'));
+};
+
+export const isHiddenFolderUploadFile = (file) => {
+  if (pathHasHiddenSegment(file.webkitRelativePath)) {
+    return true;
+  }
+  const name = file.name ?? '';
+  return name.startsWith('.');
+};
+
+export const filterVisibleFolderUploadFiles = (files) =>
+  (Array.isArray(files) ? files : []).filter((file) => !isHiddenFolderUploadFile(file));
+
 /**
  * Plan a folder upload rooted at currentPath.
  * @param {Object} fileStructure
@@ -87,7 +104,8 @@ const chainKey = (segments) => segments.join('\0');
  * } | { ok: false, reason: string, message: string, oversized?: { displayName: string, size: number }[] }}
  */
 export const planFolderUpload = (fileStructure, currentPath, files) => {
-  const oversized = findOversizedUploadFiles(files);
+  const visibleFiles = filterVisibleFolderUploadFiles(files);
+  const oversized = findOversizedUploadFiles(visibleFiles);
   if (oversized.length > 0) {
     return {
       ok: false,
@@ -98,7 +116,7 @@ export const planFolderUpload = (fileStructure, currentPath, files) => {
   }
 
   const withPaths = [];
-  for (const file of files) {
+  for (const file of visibleFiles) {
     const rel = file.webkitRelativePath;
     if (rel) {
       withPaths.push({ file, relativePath: rel });
