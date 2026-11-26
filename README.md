@@ -10,6 +10,11 @@
 </p>
 
 <p align="center">
+  <em>(All your files and folders are stored on Telegram’s servers and in your local browser.<br />
+  We don’t store any of your data. Once loaded, the whole app runs fully in your browser.)</em>
+</p>
+
+<p align="center">
   <strong>Try it online:</strong> <a href="https://0xdsaini.github.io/telegramdrive">https://0xdsaini.github.io/telegramdrive</a>
 </p>
 
@@ -20,7 +25,7 @@
 ### What you need
 
 - A **Telegram account** (same as the phone app).
-- A **Telegram group** you control, upgraded to a **supergroup** (see below). Use a group meant for files—not your main friends chat.
+- A **Telegram group** you control, upgraded to a **supergroup** (see below). A group you enjoy using for your files works well.
 - A modern **web browser** (Chrome, Firefox, Safari, Edge).
 
 You do **not** need to install anything or write code to use the hosted demo link above.
@@ -45,7 +50,7 @@ Telegram Drive works best with a **supergroup**. A normal small group hits limit
 3. Pick the **supergroup** you prepared. That group becomes your drive for this browser.
 4. Wait briefly while the app loads your folder tree from Telegram (**Syncing from Telegram…**).
 
-Your account stays on your device. All communication is between your browser and **Telegram’s servers**—no data goes to our servers (**we don’t have any**). Telegram Drive is just a tool in the browser to help organize your files. Tap **Log out** when you’re finished on this device.
+Your account stays on your device. Your browser talks directly with **Telegram**; Telegram Drive does not send your data anywhere else, and there are no extra servers in the middle. It is simply a tool in the browser to help you organize your files.
 
 ### Step 3 — Everyday use
 
@@ -53,16 +58,16 @@ Your account stays on your device. All communication is between your browser and
 - **Upload** — Drag files into the page or use the upload button; they are sent into your Telegram group.
 - **Download** — Use download on a file to save it to your device.
 - **Watch videos** — Tap a video to play it in the built-in player (including on mobile).
-- **Dry Mode (on by default)** — When you “delete” a file in the app, it is removed from your folder list but **the message in Telegram is kept**. Turn Dry Mode **off** in group settings only when you truly want deletes to remove messages from the chat too.
+- **Dry Mode (on by default)** — Deletes update your folder view first; the file message can stay in the chat until you turn Dry Mode off in group settings.
 
-### If something goes wrong
+### Quick help
 
 | What you see | What to try |
 | --- | --- |
 | Video will not play | Refresh the page; open the site from the full link above (not a shortened URL). |
 | Stuck on “Syncing from Telegram…” | Check internet; make sure you picked the right group and you can send messages there. |
 | Login fails | Use `+` and country code; request a new code. |
-| Deleted files still in Telegram | **Dry Mode** is on—that is intentional. Turn it off only if you want real message deletion. |
+| File still visible in Telegram after delete | **Dry Mode** is keeping the chat message; turn Dry Mode off when you want the message removed too. |
 
 ---
 
@@ -75,7 +80,7 @@ Your account stays on your device. All communication is between your browser and
 | Video playback | YouTube-style player in the browser | Progressive streaming via service worker + TDLib/MTProto |
 | Thumbnails | Video cards show preview images when possible | Telegram thumbs, local cache (SQLite in browser), or captured from stream |
 | Untracked scan | Find videos already in the chat that are not in your folders yet | Chat history scan vs folder tree |
-| Dry Mode | Safer deletes: list only, unless you disable it | Default **on** |
+| Dry Mode | Deletes update folders first; chat messages can stay until you change the setting | Default **on** |
 | Keyboard (desktop) | Arrow keys to move, shortcuts to open | Fine pointer / desktop layout |
 | Mobile player | Full-screen feel, swipe down to close | Orientation support where the browser allows |
 
@@ -102,15 +107,15 @@ Persistence: Telegram + browser session, thumbnail DB, metadata caches—no cust
 
 ---
 
-## Safety and settings
+## Settings
 
 | Setting | What it means |
 | --- | --- |
-| **Dry Mode** (default **on**) | Delete in the app = remove from folders only; Telegram messages stay. Turn off only when you want messages deleted too. |
-| **Selected group** | Remembered in the browser until you log out. |
-| **Log out** | Signs you out of Telegram in this app and clears local caches and folder state on this device. |
+| **Dry Mode** (default **on**) | Folder list updates when you delete; messages in the chat can remain until you turn Dry Mode off. |
+| **Selected group** | Remembered in this browser for next time you visit. |
+| **Log out** | Ends your session in this app on this device and refreshes local storage for a clean start. |
 
-**Disclaimer:** This is not an official Telegram product. You sign in with your real account. Use a dedicated group, keep Dry Mode on until you trust deletes, and follow [Telegram’s terms](https://telegram.org/tos). API rate limits apply.
+Telegram Drive is a community project built on Telegram’s platform—not an official Telegram app. It follows the same [Telegram terms of use](https://telegram.org/tos) you already accept when you use Telegram.
 
 ---
 
