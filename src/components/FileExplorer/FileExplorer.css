@@ -511,6 +511,38 @@
   gap: 0.5rem;
 }
 
+.upload-progress-panel {
+  flex: 1;
+  min-width: 12rem;
+  max-width: 28rem;
+  margin-left: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.upload-progress-label {
+  font-size: 0.8rem;
+  color: #495057;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.upload-progress-track {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(13, 110, 253, 0.15);
+  overflow: hidden;
+}
+
+.upload-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: #0d6efd;
+  transition: width 0.12s ease-out;
+}
+
 @keyframes pulse {
   0% { opacity: 0.6; }
   50% { opacity: 1; }

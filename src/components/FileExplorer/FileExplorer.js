@@ -127,6 +127,7 @@ const FileExplorer = () => {
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const [streamPlayer, setStreamPlayer] = useState({
     open: false,
@@ -941,16 +942,30 @@ const FileExplorer = () => {
             continue;
           }
 
+          setUploadProgress({
+            fileName: entry.filename,
+            done: 0,
+            total: entry.file.size,
+            ratio: 0,
+            batchIndex: uploaded + 1,
+            batchTotal: plan.entries.length,
+          });
           setSuccess(
             `Uploading ${uploaded + 1}/${plan.entries.length}: ${entry.filename} (${formatByteSize(entry.file.size)})...`,
           );
-
-          await new Promise((resolve) => setTimeout(resolve, 100));
 
           const { messageId } = await sendFileDocumentToTelegram(
             telegramClient,
             selectedChatId,
             entry.file,
+            {
+              onProgress: (p) =>
+                setUploadProgress({
+                  ...p,
+                  batchIndex: uploaded + 1,
+                  batchTotal: plan.entries.length,
+                }),
+            },
           );
 
           workingStructure = addFile(
@@ -984,6 +999,7 @@ const FileExplorer = () => {
       setError(`Failed to upload folder: ${error.message || 'Unknown error'}`);
     } finally {
       setUploading(false);
+      setUploadProgress(null);
     }
   };
   
@@ -1039,10 +1055,14 @@ const FileExplorer = () => {
             continue;
           }
 
+          setUploadProgress({
+            fileName: file.name,
+            done: 0,
+            total: file.size,
+            ratio: 0,
+          });
           setSuccess(`Uploading ${file.name} (${formatByteSize(file.size)})...`);
           console.log(`Uploading file: ${file.name}, size: ${file.size} bytes`);
-
-          await new Promise((resolve) => setTimeout(resolve, 100));
 
           let messageId;
           try {
@@ -1050,6 +1070,9 @@ const FileExplorer = () => {
               telegramClient,
               selectedChatId,
               file,
+              {
+                onProgress: (p) => setUploadProgress(p),
+              },
             ));
             console.log('Upload result messageId:', messageId);
           } catch (uploadError) {
@@ -1087,10 +1110,12 @@ const FileExplorer = () => {
       }
       
       setUploading(false);
+      setUploadProgress(null);
     } catch (error) {
       console.error('Failed to upload files:', error);
       setError('Failed to upload files: ' + error.message);
       setUploading(false);
+      setUploadProgress(null);
     }
   };
 
@@ -1498,9 +1523,32 @@ const FileExplorer = () => {
           />
 
           {uploading && (
-            <div className="loading-indicator">
-              <div className="spinner"></div>
-              Uploading...
+            <div className="upload-progress-panel" role="status" aria-live="polite">
+              {uploadProgress ? (
+                <>
+                  <div className="upload-progress-label">
+                    {uploadProgress.batchTotal
+                      ? `(${uploadProgress.batchIndex}/${uploadProgress.batchTotal}) `
+                      : ''}
+                    {uploadProgress.fileName}
+                    {' · '}
+                    {Math.round((uploadProgress.ratio ?? 0) * 100)}%
+                    {' · '}
+                    {formatByteSize(uploadProgress.done)} / {formatByteSize(uploadProgress.total)}
+                  </div>
+                  <div className="upload-progress-track">
+                    <div
+                      className="upload-progress-fill"
+                      style={{ width: `${Math.min(100, Math.round((uploadProgress.ratio ?? 0) * 100))}%` }}
+                    />
+                  </div>
+                </>
+              ) : (
+                <div className="loading-indicator">
+                  <div className="spinner"></div>
+                  Preparing upload…
+                </div>
+              )}
             </div>
           )}
           

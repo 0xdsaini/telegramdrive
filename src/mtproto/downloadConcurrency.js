@@ -1,5 +1,6 @@
-/** Telegram Web A: DOWNLOAD_WORKERS = 16 (src/config.ts) */
+/** Telegram Web A/K: parallel file workers (src/config.ts, apiFileManager activeDelta pipeline) */
 export const DOWNLOAD_WORKERS = 16;
+export const UPLOAD_WORKERS = 16;
 
 /**
  * Run async tasks with a fixed worker pool (telegram-tt GramJS downloadMedia workers).

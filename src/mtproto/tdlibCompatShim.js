@@ -1,5 +1,6 @@
 import { Api } from 'telegram';
 import { CustomFile } from 'telegram/client/uploads';
+import { sendDocumentMtproto } from './sendDocumentMtproto';
 import { registerDocumentFromMessage, getDocumentByFileId } from './documentRegistry';
 import { cancelMtprotoFilePartRequests, readDocumentPart } from './requestFilePartMtproto';
 import { messageToTdlibShape } from './messageContentShape';
@@ -252,6 +253,19 @@ export function createTdlibCompatShim(gram, { apiId, apiHash, saveSession, onAut
           const input = req.input_message_content;
           const raw = input?.document?.data;
           if (input?.['@type'] === 'inputMessageDocument' && raw) {
+            if (typeof File !== 'undefined' && raw instanceof File) {
+              const sent = await sendDocumentMtproto(gram, req.chat_id, raw);
+              return { '@type': 'message', id: sent.id };
+            }
+            if (typeof Blob !== 'undefined' && raw instanceof Blob) {
+              const named = new File(
+                [raw],
+                input.document.name || 'file',
+                { type: raw.type || 'application/octet-stream' },
+              );
+              const sent = await sendDocumentMtproto(gram, req.chat_id, named);
+              return { '@type': 'message', id: sent.id };
+            }
             const file = await inputBlobToCustomFile(
               raw,
               input.document.name || 'file',
@@ -260,6 +274,7 @@ export function createTdlibCompatShim(gram, { apiId, apiHash, saveSession, onAut
               file,
               caption: inputMessageCaption(input),
               forceDocument: true,
+              workers: 16,
             });
             return { '@type': 'message', id: sent.id };
           }

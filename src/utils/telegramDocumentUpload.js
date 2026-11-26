@@ -1,3 +1,4 @@
+import { sendDocumentMtproto } from '../mtproto/sendDocumentMtproto';
 import { isVideoFileName } from './mimeTypes';
 import { generateVideoPosterJpeg } from './generateVideoPosterJpeg';
 import { setCachedPoster } from './thumbnailCache';
@@ -33,10 +34,24 @@ export const findOversizedUploadFiles = (files) => {
 };
 
 /**
- * Upload one local File as a Telegram document message.
+ * Upload one local File as a Telegram document message (parallel MTProto upload + progress).
+ * @param {*} telegramClient TDLib compat shim (`_gram` = GramJS client)
+ * @param {number} selectedChatId
+ * @param {File} file
+ * @param {{ onProgress?: (p: { done: number, total: number, fileName: string, ratio: number }) => void }} [opts]
  * @returns {Promise<{ messageId: number }>}
  */
-export const sendFileDocumentToTelegram = async (telegramClient, selectedChatId, file) => {
+export const sendFileDocumentToTelegram = async (
+  telegramClient,
+  selectedChatId,
+  file,
+  opts = {},
+) => {
+  const gram = telegramClient?._gram;
+  if (!gram) {
+    throw new Error('Telegram MTProto client is not available');
+  }
+
   let uploadPoster = null;
   if (isVideoFileName(file.name)) {
     try {
@@ -46,38 +61,21 @@ export const sendFileDocumentToTelegram = async (telegramClient, selectedChatId,
     }
   }
 
-  const inputMessageContent = {
-    '@type': 'inputMessageDocument',
-    document: {
-      '@type': 'inputFileBlob',
-      name: file.name,
-      data: file,
-    },
-    disable_content_type_detection: false,
-  };
+  const thumb =
+    uploadPoster?.blob
+      ? new File([uploadPoster.blob], 'thumb.jpg', { type: 'image/jpeg' })
+      : null;
 
-  if (uploadPoster?.blob) {
-    inputMessageContent.thumbnail = {
-      '@type': 'inputThumbnail',
-      thumbnail: {
-        '@type': 'inputFileBlob',
-        name: 'thumb.jpg',
-        data: uploadPoster.blob,
-      },
-      width: uploadPoster.width,
-      height: uploadPoster.height,
-    };
-  }
-
-  const result = await telegramClient.send({
-    '@type': 'sendMessage',
-    chat_id: selectedChatId,
-    input_message_content: inputMessageContent,
+  const message = await sendDocumentMtproto(gram, selectedChatId, file, {
+    onProgress: opts.onProgress,
+    thumb,
   });
 
-  if (!result?.id) {
+  if (!message?.id) {
     throw new Error('No message ID returned');
   }
+
+  const result = { id: message.id };
 
   if (uploadPoster?.blob) {
     try {
@@ -90,5 +88,5 @@ export const sendFileDocumentToTelegram = async (telegramClient, selectedChatId,
     }
   }
 
-  return { messageId: result.id };
+  return { messageId: result.id, message };
 };
