@@ -602,6 +602,7 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
     if (!open) return undefined;
     const onKey = (e) => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
       switch (e.key) {
         case ' ':
         case 'k':
@@ -620,14 +621,10 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback }) 
           toggleMute();
           break;
         case 'ArrowLeft':
-        case 'j':
-        case 'J':
           e.preventDefault();
           seekBy(-SEEK_STEP);
           break;
         case 'ArrowRight':
-        case 'l':
-        case 'L':
           e.preventDefault();
           seekBy(SEEK_STEP);
           break;
