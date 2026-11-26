@@ -7,6 +7,7 @@ import {
   getMetadataTimestampMs,
   stampFileStructureUpdatedAt,
   ensureMetadataUpdatedAtFromTelegram,
+  mergeFileStructures,
 } from '../../utils/fileStructureUtils';
 
 import React, { useState, useEffect, useRef, useCallback, useContext } from 'react';
@@ -762,14 +763,10 @@ const TelegramMessenger = () => {
 
         if (remoteTs > localTs) {
           console.warn(
-            'Remote metadata is newer than this device; refreshing local copy instead of uploading.',
-            { localTs, remoteTs }
+            'Remote metadata is newer; merging with local changes before save.',
+            { localTs, remoteTs },
           );
-          setFileStructure(remoteStructure);
-          setStatus(
-            'Metadata was updated on another device. Your view has been refreshed — retry your change.'
-          );
-          return false;
+          updatedStructure = mergeFileStructures(remoteStructure, updatedStructure);
         }
       }
 

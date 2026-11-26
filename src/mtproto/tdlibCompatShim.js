@@ -1,6 +1,7 @@
 import { Api } from 'telegram';
 import { CustomFile } from 'telegram/client/uploads';
 import { sendDocumentMtproto } from './sendDocumentMtproto';
+import { editDocumentMessageMtproto } from './editDocumentMtproto';
 import { registerDocumentFromMessage, getDocumentByFileId } from './documentRegistry';
 import { cancelMtprotoFilePartRequests, readDocumentPart } from './requestFilePartMtproto';
 import { messageToTdlibShape } from './messageContentShape';
@@ -295,16 +296,44 @@ export function createTdlibCompatShim(gram, { apiId, apiHash, saveSession, onAut
 
         case 'editMessageMedia': {
           const input = req.input_message_content;
+          const raw = input?.document?.data;
+          const caption = inputMessageCaption(input);
           if (input?.document?.data) {
+            if (typeof File !== 'undefined' && raw instanceof File) {
+              await editDocumentMessageMtproto(
+                gram,
+                req.chat_id,
+                req.message_id,
+                raw,
+                { caption },
+              );
+              return { '@type': 'ok' };
+            }
+            if (typeof Blob !== 'undefined' && raw instanceof Blob) {
+              const named = new File(
+                [raw],
+                input.document.name || 'metadata.json',
+                { type: raw.type || 'application/json' },
+              );
+              await editDocumentMessageMtproto(
+                gram,
+                req.chat_id,
+                req.message_id,
+                named,
+                { caption },
+              );
+              return { '@type': 'ok' };
+            }
             const file = await inputBlobToCustomFile(
-              input.document.data,
+              raw,
               input.document.name || 'metadata.json',
             );
             await gram.editMessage(req.chat_id, {
               message: req.message_id,
               file,
-              caption: inputMessageCaption(input),
+              caption,
               forceDocument: true,
+              workers: 16,
             });
             return { '@type': 'ok' };
           }

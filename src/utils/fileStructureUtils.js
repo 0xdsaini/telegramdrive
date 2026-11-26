@@ -41,6 +41,51 @@ export const stampFileStructureUpdatedAt = (fileStructure, date = new Date()) =>
 };
 
 /**
+ * Deep-merge folder trees; local wins on file/folder name conflicts (keeps in-flight uploads).
+ * @param {Object} remote
+ * @param {Object} local
+ * @returns {Object}
+ */
+export const mergeFileStructures = (remote, local) => {
+  if (!remote) return local;
+  if (!local) return remote;
+
+  const mergeFolder = (remoteFolder, localFolder) => {
+    if (!remoteFolder) return localFolder;
+    if (!localFolder) return remoteFolder;
+
+    const fileMap = new Map();
+    for (const file of remoteFolder.files || []) {
+      if (file?.filename) fileMap.set(file.filename, { ...file });
+    }
+    for (const file of localFolder.files || []) {
+      if (file?.filename) fileMap.set(file.filename, { ...file });
+    }
+
+    const subByName = new Map();
+    for (const sub of remoteFolder.subfolders || []) {
+      if (sub?.name) subByName.set(sub.name, sub);
+    }
+    for (const sub of localFolder.subfolders || []) {
+      if (sub?.name) {
+        const existing = subByName.get(sub.name);
+        subByName.set(sub.name, mergeFolder(existing, sub));
+      }
+    }
+
+    return {
+      ...remoteFolder,
+      ...localFolder,
+      name: localFolder.name ?? remoteFolder.name,
+      files: Array.from(fileMap.values()),
+      subfolders: Array.from(subByName.values()),
+    };
+  };
+
+  return mergeFolder(remote, local);
+};
+
+/**
  * Legacy metadata without updatedAt: infer from Telegram message edit/send date (unix seconds).
  * @param {Object} fileStructure
  * @param {number} [editDateUnix]

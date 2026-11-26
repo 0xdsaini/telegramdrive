@@ -75,7 +75,12 @@ export const sendFileDocumentToTelegram = async (
     throw new Error('No message ID returned');
   }
 
-  const result = { id: message.id };
+  const numericId =
+    typeof message.id === 'bigint' ? Number(message.id) : Number(message.id);
+  if (!Number.isFinite(numericId)) {
+    throw new Error(`Invalid message id after upload: ${String(message.id)}`);
+  }
+  const result = { id: numericId };
 
   if (uploadPoster?.blob) {
     try {
@@ -88,5 +93,5 @@ export const sendFileDocumentToTelegram = async (
     }
   }
 
-  return { messageId: result.id, message };
+  return { messageId: numericId, message };
 };

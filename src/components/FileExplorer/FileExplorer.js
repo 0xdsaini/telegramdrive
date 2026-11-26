@@ -1025,14 +1025,15 @@ const FileExplorer = () => {
       setError(null);
       setSuccess(null);
       setUploading(true);
-      
+      let workingStructure = fileStructure;
+
       // Process files one by one
       for (const file of filesToUpload) {
         try {
           console.log(`Starting upload for file: ${file.name}`);
           
           // Check if file already exists in the current path
-          const folderExists = findFolderByPath(fileStructure, currentPath);
+          const folderExists = findFolderByPath(workingStructure, currentPath);
           if (folderExists) {
             const fileExists = folderExists.files.some(f => f.filename === file.name);
             if (fileExists) {
@@ -1082,13 +1083,13 @@ const FileExplorer = () => {
           }
 
           if (messageId) {
-            const updatedStructure = addFile(fileStructure, currentPath, file.name, messageId);
-            
+            workingStructure = addFile(workingStructure, currentPath, file.name, messageId);
+
             // Update the file structure in Telegram
             console.log('Updating file structure...');
             try {
-              const success = await window.updateTelegramFileStructure(updatedStructure);
-              
+              const success = await window.updateTelegramFileStructure(workingStructure);
+
               if (success) {
                 setSuccess(`Successfully uploaded ${file.name}`);
                 console.log(`Successfully uploaded ${file.name}`);
