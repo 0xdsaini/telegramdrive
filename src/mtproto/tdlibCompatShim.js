@@ -8,6 +8,20 @@ import {
   refreshDocumentFileReference,
 } from './refreshDocumentReference';
 
+function tdlibSearchFilterToGram(filter) {
+  const type = filter?.['@type'];
+  switch (type) {
+    case 'searchMessagesFilterDocument':
+      return new Api.InputMessagesFilterDocument();
+    case 'searchMessagesFilterVideo':
+      return new Api.InputMessagesFilterVideo();
+    case 'searchMessagesFilterPhoto':
+      return new Api.InputMessagesFilterPhotos();
+    default:
+      return new Api.InputMessagesFilterEmpty();
+  }
+}
+
 function inputMessageCaption(input) {
   const caption = input?.caption;
   if (!caption) {
@@ -147,10 +161,20 @@ export function createTdlibCompatShim(gram, { apiId, apiHash, saveSession, onAut
         }
 
         case 'searchChatMessages': {
-          const msgs = await gram.getMessages(req.chat_id, {
-            search: req.query || '',
-            limit: req.limit || 10,
-          });
+          const filter = tdlibSearchFilterToGram(req.filter);
+          const offsetId = req.from_message_id || 0;
+          const limit = req.limit || 100;
+          const opts = { limit, offsetId };
+          const query = typeof req.query === 'string' ? req.query : '';
+          if (query) {
+            opts.search = query;
+          }
+          const hasTypedFilter = req.filter?.['@type']
+            && req.filter['@type'] !== 'searchMessagesFilterEmpty';
+          if (hasTypedFilter || query) {
+            opts.filter = filter;
+          }
+          const msgs = await gram.getMessages(req.chat_id, opts);
           return {
             '@type': 'messages',
             messages: (msgs || []).map(messageToTdlibShape).filter(Boolean),

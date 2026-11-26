@@ -22,6 +22,7 @@ import {
   readSavedMetadataMessageId,
   rememberMetadataMessageId,
 } from '../../utils/metadataStorageMessage';
+import { collectChatHistoryMatches } from '../../utils/chatHistoryScan';
 import './TelegramMessenger.css';
 
 function decodeFilePartAsUtf8(data) {
@@ -122,35 +123,11 @@ const TelegramMessenger = () => {
     if (!foundMessage) {
       try {
         console.log('Falling back to getChatHistory for METADATA_STORAGE...');
-        let fromMessageId = 0;
-        const maxAttempts = 8;
-        const historyMatches = [];
-
-        for (let attempt = 0; attempt < maxAttempts; attempt++) {
-          const historyResult = await client.send({
-            '@type': 'getChatHistory',
-            chat_id: selectedChatId,
-            from_message_id: fromMessageId,
-            offset: 0,
-            limit: 50,
-            only_local: false,
-          });
-
-          if (!historyResult.messages?.length) {
-            break;
-          }
-
-          fromMessageId =
-            historyResult.messages[historyResult.messages.length - 1].id;
-          historyMatches.push(
-            ...(historyResult.messages ?? []).filter(isMetadataStorageMessage),
-          );
-
-          if (historyResult.messages.length < 50) {
-            break;
-          }
-        }
-
+        const historyMatches = await collectChatHistoryMatches(
+          client,
+          selectedChatId,
+          isMetadataStorageMessage,
+        );
         foundMessage = pickCanonicalMetadataMessage(historyMatches);
         if (foundMessage) {
           foundId = foundMessage.id;
@@ -335,34 +312,11 @@ const TelegramMessenger = () => {
       // Method 2: Fallback to getChatHistory if searchChatMessages fails
       try {
         console.log("Falling back to getChatHistory...");
-        let fromMessageId = 0;
-        const maxAttempts = 8;
-        const historyMatches = [];
-
-        for (let attempt = 0; attempt < maxAttempts; attempt++) {
-          const historyResult = await clientRef.current.send({
-            "@type": "getChatHistory",
-            "chat_id": selectedChatId,
-            "from_message_id": fromMessageId,
-            "offset": 0,
-            "limit": 50,
-            "only_local": false
-          });
-
-          if (!historyResult.messages?.length) {
-            break;
-          }
-
-          fromMessageId = historyResult.messages[historyResult.messages.length - 1].id;
-          historyMatches.push(
-            ...(historyResult.messages ?? []).filter(isMetadataStorageMessage),
-          );
-
-          if (historyResult.messages.length < 50) {
-            break;
-          }
-        }
-
+        const historyMatches = await collectChatHistoryMatches(
+          clientRef.current,
+          selectedChatId,
+          isMetadataStorageMessage,
+        );
         const foundMessage = pickCanonicalMetadataMessage(historyMatches);
         if (foundMessage) {
           const foundId = foundMessage.id;

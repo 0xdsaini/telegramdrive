@@ -40,12 +40,25 @@ export function messageMatchesFileName(message, fileName) {
   return false;
 }
 
+function messageUnixSeconds(value) {
+  if (value == null) {
+    return 0;
+  }
+  if (typeof value === 'number') {
+    return value;
+  }
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
 export function messageToTdlibShape(msg) {
   if (!msg) return null;
 
   const media = msg.media;
   const chatId = normalizeChatId(msg.chatId);
   const captionText = msg.message || '';
+  const dateUnix = messageUnixSeconds(msg.date);
+  const editDateUnix = messageUnixSeconds(msg.editDate);
 
   if (media?.className === 'MessageMediaDocument' && media.document) {
     const reg = registerDocumentFromMessage(media.document, msg);
@@ -59,6 +72,8 @@ export function messageToTdlibShape(msg) {
         '@type': 'message',
         id: msg.id,
         chat_id: chatId,
+        date: dateUnix,
+        edit_date: editDateUnix,
         content: {
           '@type': 'messageVideo',
           video: {
@@ -76,6 +91,8 @@ export function messageToTdlibShape(msg) {
       '@type': 'message',
       id: msg.id,
       chat_id: chatId,
+      date: dateUnix,
+      edit_date: editDateUnix,
       content: {
         '@type': 'messageDocument',
         document: {
@@ -94,6 +111,8 @@ export function messageToTdlibShape(msg) {
       '@type': 'message',
       id: msg.id,
       chat_id: chatId,
+      date: dateUnix,
+      edit_date: editDateUnix,
       content: { '@type': 'messagePhoto' },
     };
   }
@@ -102,6 +121,8 @@ export function messageToTdlibShape(msg) {
     '@type': 'message',
     id: msg.id,
     chat_id: chatId,
+    date: dateUnix,
+    edit_date: editDateUnix,
     content: captionText ? { '@type': 'messageText', text: { text: captionText } } : {},
   };
 }

@@ -14,17 +14,25 @@ const UntrackedFilesPanel = ({ currentPath, onSuccess, onError, slot = 'toggle',
     }
     return (
       <UntrackedFilesSheet
+        visibleFiles={state.visibleFiles}
         untrackedFiles={state.untrackedFiles}
         selectedFiles={state.selectedFiles}
         isLoading={state.isLoading}
         isRefreshing={state.isRefreshing}
+        isLoadingOlder={state.isLoadingOlder}
+        scannedMessageCount={state.scannedMessageCount}
+        hasMoreInChat={state.hasMoreInChat}
+        displayPage={state.displayPage}
+        displayPageCount={state.displayPageCount}
         telegramClient={state.telegramClient}
         selectedChatId={state.selectedChatId}
         onToggleSelect={state.toggleFileSelection}
-        onSelectAll={state.selectAll}
+        onSelectAllOnPage={state.selectAllOnPage}
         onClearSelection={state.clearSelection}
         onRefresh={state.refresh}
         onImport={state.addSelectedFilesToMetadata}
+        onLoadOlderInChat={state.loadOlderInChat}
+        onDisplayPageChange={state.goToDisplayPage}
       />
     );
   }

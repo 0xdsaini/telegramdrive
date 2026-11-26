@@ -29,21 +29,30 @@ function SkeletonRows() {
 }
 
 const UntrackedFilesSheet = ({
+  visibleFiles,
   untrackedFiles,
   selectedFiles,
   isLoading,
   isRefreshing,
+  isLoadingOlder,
+  scannedMessageCount,
+  hasMoreInChat,
+  displayPage,
+  displayPageCount,
   telegramClient,
   selectedChatId,
   onToggleSelect,
-  onSelectAll,
+  onSelectAllOnPage,
   onClearSelection,
   onRefresh,
   onImport,
+  onLoadOlderInChat,
+  onDisplayPageChange,
 }) => {
   const showInitialSkeleton = isLoading && untrackedFiles.length === 0;
-  const allSelected =
-    untrackedFiles.length > 0 && selectedFiles.length === untrackedFiles.length;
+  const pageSelectedCount = visibleFiles.filter((f) => selectedFiles.includes(f.messageId)).length;
+  const allOnPageSelected =
+    visibleFiles.length > 0 && pageSelectedCount === visibleFiles.length;
 
   return (
     <section className="untracked-files-sheet" aria-label="Untracked files in Telegram chat">
@@ -51,7 +60,7 @@ const UntrackedFilesSheet = ({
         <div className="untracked-files-header-text">
           <h3>Untracked Files</h3>
           <p className="untracked-files-subtitle">
-            Videos found in this group that are not in the current folder.
+            {untrackedFiles.length} untracked · scanned {scannedMessageCount} chat messages
             {isRefreshing && <span className="untracked-refreshing-label"> Refreshing…</span>}
           </p>
         </div>
@@ -59,10 +68,10 @@ const UntrackedFilesSheet = ({
           <button
             type="button"
             className="untracked-text-button"
-            onClick={allSelected ? onClearSelection : onSelectAll}
-            disabled={untrackedFiles.length === 0 || showInitialSkeleton}
+            onClick={allOnPageSelected ? onClearSelection : onSelectAllOnPage}
+            disabled={visibleFiles.length === 0 || showInitialSkeleton}
           >
-            {allSelected ? 'Clear' : 'Select all'}
+            {allOnPageSelected ? 'Clear' : 'Select page'}
           </button>
           <button
             type="button"
@@ -92,9 +101,12 @@ const UntrackedFilesSheet = ({
         ) : untrackedFiles.length === 0 ? (
           <div className="no-files-message">
             Nothing orphaned here — all chat videos in this scan are already tracked in this folder.
+            {hasMoreInChat && (
+              <p className="untracked-hint">Load older messages in the chat to scan more history.</p>
+            )}
           </div>
         ) : (
-          untrackedFiles.map((file) => {
+          visibleFiles.map((file) => {
             const selected = selectedFiles.includes(file.messageId);
             const isVideo = file.mediaType === 'video' || isVideoFileName(file.filename);
             return (
@@ -143,6 +155,42 @@ const UntrackedFilesSheet = ({
           })
         )}
       </div>
+
+      <footer className="untracked-files-footer">
+        {displayPageCount > 1 && (
+          <div className="untracked-pagination">
+            <button
+              type="button"
+              className="untracked-text-button"
+              disabled={displayPage <= 0 || isLoading}
+              onClick={() => onDisplayPageChange(displayPage - 1)}
+            >
+              Previous
+            </button>
+            <span className="untracked-pagination-label">
+              Page {displayPage + 1} of {displayPageCount}
+            </span>
+            <button
+              type="button"
+              className="untracked-text-button"
+              disabled={displayPage >= displayPageCount - 1 || isLoading}
+              onClick={() => onDisplayPageChange(displayPage + 1)}
+            >
+              Next
+            </button>
+          </div>
+        )}
+        {hasMoreInChat && (
+          <button
+            type="button"
+            className="untracked-load-older-button"
+            onClick={onLoadOlderInChat}
+            disabled={isLoadingOlder || isLoading}
+          >
+            {isLoadingOlder ? 'Loading older…' : 'Load older messages from chat'}
+          </button>
+        )}
+      </footer>
     </section>
   );
 };

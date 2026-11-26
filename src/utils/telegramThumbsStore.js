@@ -1,3 +1,4 @@
+import { collectChatHistoryMatches } from './chatHistoryScan';
 import { downloadSmallTelegramFile } from './downloadSmallTelegramFile';
 import { createThumbsBootTimer, thumbsBootLog } from './thumbsBootstrapDebug';
 import {
@@ -125,32 +126,13 @@ function pickCanonicalThumbsMessage(messages) {
 }
 
 async function searchThumbsMessageViaHistory(client, chatId) {
-  let fromMessageId = 0;
-  const maxAttempts = 8;
-
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const historyResult = await client.send({
-      '@type': 'getChatHistory',
-      chat_id: chatId,
-      from_message_id: fromMessageId,
-      offset: 0,
-      limit: 50,
-      only_local: false,
-    });
-
-    const found = pickCanonicalThumbsMessage(historyResult?.messages);
-    if (found) {
-      return found.id;
-    }
-
-    const messages = historyResult?.messages ?? [];
-    if (messages.length < 50) {
-      break;
-    }
-    fromMessageId = messages[messages.length - 1].id;
-  }
-
-  return null;
+  const historyMatches = await collectChatHistoryMatches(
+    client,
+    chatId,
+    isThumbsStorageMessage,
+  );
+  const found = pickCanonicalThumbsMessage(historyMatches);
+  return found?.id ?? null;
 }
 
 async function resolveThumbsMessageIdForBoot(client, chatId) {

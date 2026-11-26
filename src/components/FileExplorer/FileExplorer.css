@@ -751,6 +751,54 @@
   transform: none;
 }
 
+.untracked-files-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1.25rem 1rem;
+  border-top: 1px solid #eef0f2;
+}
+
+.untracked-pagination {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.untracked-pagination-label {
+  font-size: 0.8rem;
+  color: #6c757d;
+}
+
+.untracked-load-older-button {
+  padding: 0.5rem 1rem;
+  border-radius: 0.375rem;
+  border: 1px dashed #adb5bd;
+  background: #f8f9fa;
+  color: #495057;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.untracked-load-older-button:hover:not(:disabled) {
+  background: #e9ecef;
+  border-color: #868e96;
+}
+
+.untracked-load-older-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.untracked-hint {
+  margin: 0.75rem 0 0;
+  font-size: 0.8rem;
+  color: #6c757d;
+}
+
 .untracked-files-list {
   flex: 1;
   max-height: min(320px, 40vh);

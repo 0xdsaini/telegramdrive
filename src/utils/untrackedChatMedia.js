@@ -1,6 +1,19 @@
-import { isMetadataStorageMessage } from './metadataStorageMessage';
+import { isMetadataStorageMessage, METADATA_FILENAME } from './metadataStorageMessage';
 
 export { isMetadataStorageMessage };
+
+export const UNTRACKED_SCAN_PAGE_SIZE = 100;
+export const UNTRACKED_UI_PAGE_SIZE = 50;
+
+const THUMBS_DB_FILENAME = 'thumbs.db';
+
+function isSystemStorageDocumentMessage(message) {
+  if (isMetadataStorageMessage(message)) {
+    return true;
+  }
+  const docName = message?.content?.document?.file_name;
+  return docName === METADATA_FILENAME || docName === THUMBS_DB_FILENAME;
+}
 
 const MIME_TO_EXT = {
   'video/mp4': '.mp4',
@@ -177,7 +190,7 @@ export function buildUntrackedFileEntries(
   const videosNeedingUnnamed = [];
 
   for (const message of messages) {
-    if (!message?.content || isMetadataStorageMessage(message)) {
+    if (!message?.content || isSystemStorageDocumentMessage(message)) {
       continue;
     }
 
@@ -198,7 +211,9 @@ export function buildUntrackedFileEntries(
         messageId: message.id,
         filename: unique,
         size: messageMediaSize(message),
-        date: new Date(message.date * 1000).toLocaleString(),
+        date: message.date
+          ? new Date(message.date * 1000).toLocaleString()
+          : '—',
         mediaType: 'document',
       });
       continue;
@@ -227,7 +242,9 @@ export function buildUntrackedFileEntries(
       messageId: message.id,
       filename: unique,
       size: messageMediaSize(message),
-      date: new Date(message.date * 1000).toLocaleString(),
+      date: message.date
+        ? new Date(message.date * 1000).toLocaleString()
+        : '—',
       mediaType: 'video',
     });
   }
@@ -250,7 +267,9 @@ export function buildUntrackedFileEntries(
       messageId: message.id,
       filename: unique,
       size: messageMediaSize(message),
-      date: new Date(message.date * 1000).toLocaleString(),
+      date: message.date
+        ? new Date(message.date * 1000).toLocaleString()
+        : '—',
       mediaType: 'video',
     });
   }
@@ -266,4 +285,61 @@ export function mergeChatMediaMessages(documentResult, videoResult) {
     }
   }
   return [...byId.values()];
+}
+
+function minMessageId(messages) {
+  if (!messages?.length) {
+    return null;
+  }
+  return Math.min(...messages.map((m) => Number(m.id)).filter((id) => Number.isFinite(id)));
+}
+
+/**
+ * One scan page: documents + videos (parallel), oldest id for the next page.
+ */
+export async function fetchUntrackedMediaBatch(
+  client,
+  chatId,
+  { offsetMessageId = 0, limit = UNTRACKED_SCAN_PAGE_SIZE } = {},
+) {
+  const base = {
+    chat_id: chatId,
+    limit,
+    from_message_id: offsetMessageId || 0,
+    offset: 0,
+    only_missed: false,
+  };
+
+  const [documentResult, videoResult] = await Promise.all([
+    client.send({
+      '@type': 'searchChatMessages',
+      ...base,
+      filter: { '@type': 'searchMessagesFilterDocument' },
+    }),
+    client.send({
+      '@type': 'searchChatMessages',
+      ...base,
+      filter: { '@type': 'searchMessagesFilterVideo' },
+    }),
+  ]);
+
+  const docMessages = documentResult?.messages ?? [];
+  const videoMessages = videoResult?.messages ?? [];
+  const messages = mergeChatMediaMessages(documentResult, videoResult);
+
+  const hasMore =
+    docMessages.length >= limit || videoMessages.length >= limit;
+  const nextOffsetMessageId = minMessageId(messages);
+
+  return { messages, hasMore, nextOffsetMessageId };
+}
+
+export function appendMessagesById(existingById, newMessages) {
+  const next = new Map(existingById);
+  for (const msg of newMessages) {
+    if (msg?.id != null) {
+      next.set(Number(msg.id), msg);
+    }
+  }
+  return next;
 }
