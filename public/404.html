@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Telegram Drive</title>
+    <script>
+      (function () {
+        var baked = '%PUBLIC_URL%';
+        var base =
+          baked && baked !== '.' && baked.indexOf('PUBLIC_URL') === -1
+            ? baked.replace(/\/$/, '')
+            : '';
+        if (!base) {
+          var parts = location.pathname.split('/').filter(Boolean);
+          if (parts.length > 0 && parts[0] !== 'stream') {
+            base = '/' + parts[0];
+          }
+        }
+        sessionStorage.setItem(
+          'gh-spa-path',
+          location.pathname + location.search + location.hash,
+        );
+        location.replace((base || '') + '/' + location.search + location.hash);
+      })();
+    </script>
+  </head>
+  <body></body>
+</html>

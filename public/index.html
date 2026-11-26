@@ -38,6 +38,17 @@
         }
       })();
     </script>
+    <script>
+      (function tgDriveRestoreGhPagesPath() {
+        try {
+          var saved = sessionStorage.getItem('gh-spa-path');
+          if (!saved) return;
+          sessionStorage.removeItem('gh-spa-path');
+          var url = new URL(saved, location.origin);
+          history.replaceState({ tgExplorer: true }, '', url.pathname + url.search + url.hash);
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <script>

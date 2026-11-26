@@ -6,6 +6,11 @@ import Auth from './components/Auth/Auth';
 import TelegramMessenger from './components/TelegramMessenger/TelegramMessenger';
 import { TelegramProvider, useTelegram } from './context/TelegramContext';
 import { redirectToAppBaseIfNeeded } from './utils/appBasePath';
+import {
+  parseExplorerUrlFromLocation,
+  rememberPendingExplorerPath,
+  restoreGhPagesSpaPath,
+} from './utils/explorerUrl';
 import { registerStreamBridge, setStreamBridgeClient, refreshStreamBridgeAfterIdle } from './utils/streamBridge';
 import { installStreamDebugHelpers } from './utils/streamDebug';
 import { recordAppBoot } from './utils/reloadDebug';
@@ -37,6 +42,7 @@ const AppContent = () => {
   }, [clearDownloadedFiles]);
 
   useEffect(() => {
+    restoreGhPagesSpaPath();
     redirectToAppBaseIfNeeded();
     recordAppBoot();
     installStreamDebugHelpers();
@@ -88,6 +94,16 @@ const AppContent = () => {
   const isAuthenticated = isConnected && selectedChatId;
   const isAppReady =
     isAuthenticated && isFileStructureLoaded && isThumbsStoreLoaded;
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      return;
+    }
+    const explorerPath = parseExplorerUrlFromLocation();
+    if (explorerPath !== '/') {
+      rememberPendingExplorerPath(window.location.pathname);
+    }
+  }, [isAuthenticated]);
   
   // Show the hidden TelegramMessenger component for handling Telegram API interactions
   // This component will be invisible but still functional

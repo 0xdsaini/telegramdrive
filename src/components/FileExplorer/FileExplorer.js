@@ -26,6 +26,13 @@ import { createEmptyFileStructure, findFolderByPath, createFolder, deleteFolder,
 import { TelegramContext } from '../../context/TelegramContext';
 import UntrackedFilesPanel, { useUntrackedFiles } from './UntrackedFilesPanel';
 import UntrackedFilesToggle from './UntrackedFilesToggle';
+import {
+  parseExplorerUrlFromLocation,
+  pushExplorerBrowserUrl,
+  readPendingExplorerPath,
+  replaceExplorerBrowserUrl,
+  resolveExplorerLocation,
+} from '../../utils/explorerUrl';
 
 // (function() {
 //   const originalLog = console.log;
@@ -86,7 +93,11 @@ const FileExplorer = () => {
   const [uploading, setUploading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [streamPlayer, setStreamPlayer] = useState({ open: false, url: '', title: '', fileId: null });
-  
+  const urlSuppressRef = useRef(false);
+  const urlWriteModeRef = useRef('replace');
+  const initialUrlAppliedRef = useRef(false);
+  const pendingPlayFileRef = useRef(null);
+
   // Access the Telegram context
   const { 
     fileStructure, 
@@ -128,6 +139,78 @@ const FileExplorer = () => {
       streamDebug('play', 'background prepareForStreaming', { err: err?.message });
     });
   }, [isConnected, telegramClient]);
+
+  const syncExplorerToAddressBar = useCallback(() => {
+    if (urlSuppressRef.current) {
+      return;
+    }
+    const playingFile = streamPlayer.open && streamPlayer.title ? streamPlayer.title : null;
+    const mode = urlWriteModeRef.current;
+    urlWriteModeRef.current = 'replace';
+    if (mode === 'push') {
+      pushExplorerBrowserUrl(currentPath, playingFile);
+    } else {
+      replaceExplorerBrowserUrl(currentPath, playingFile);
+    }
+  }, [currentPath, streamPlayer.open, streamPlayer.title]);
+
+  const applyExplorerFromAddressBar = useCallback(
+    (explorerPath) => {
+      if (!fileStructure) {
+        return;
+      }
+      const resolved = resolveExplorerLocation(fileStructure, explorerPath);
+      if (!resolved.valid && explorerPath !== '/') {
+        setError('Folder or file not found.');
+      }
+      setCurrentPath(resolved.folderPath);
+      if (resolved.fileName) {
+        pendingPlayFileRef.current = resolved.fileName;
+      } else if (streamPlayer.open) {
+        if (streamPlayer.fileId != null) {
+          unregisterPlaybackFileId(streamPlayer.fileId);
+        }
+        setStreamPlayer({ open: false, url: '', title: '', fileId: null });
+      }
+    },
+    [fileStructure, streamPlayer.fileId, streamPlayer.open],
+  );
+
+  useEffect(() => {
+    syncExplorerToAddressBar();
+  }, [syncExplorerToAddressBar]);
+
+  useEffect(() => {
+    const onPopState = () => {
+      urlSuppressRef.current = true;
+      applyExplorerFromAddressBar(parseExplorerUrlFromLocation());
+      urlSuppressRef.current = false;
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [applyExplorerFromAddressBar]);
+
+  useEffect(() => {
+    if (!fileStructure || !isFileStructureLoaded || initialUrlAppliedRef.current) {
+      return;
+    }
+    initialUrlAppliedRef.current = true;
+    urlSuppressRef.current = true;
+    let explorerPath = parseExplorerUrlFromLocation();
+    const pending = readPendingExplorerPath();
+    if (pending) {
+      explorerPath = pending;
+    }
+    applyExplorerFromAddressBar(explorerPath);
+    urlSuppressRef.current = false;
+    urlWriteModeRef.current = 'replace';
+    syncExplorerToAddressBar();
+  }, [
+    fileStructure,
+    isFileStructureLoaded,
+    applyExplorerFromAddressBar,
+    syncExplorerToAddressBar,
+  ]);
   
   // Update current folder when file structure or path changes
   useEffect(() => {
@@ -306,7 +389,21 @@ const FileExplorer = () => {
   // This function is no longer needed as we're using the TelegramContext
   // to manage the file structure
 
+  const closeStreamPlayer = useCallback(() => {
+    setStreamPlayer((prev) => {
+      if (prev.fileId != null) {
+        unregisterPlaybackFileId(prev.fileId);
+      }
+      if (!prev.open) {
+        return prev;
+      }
+      return { open: false, url: '', title: '', fileId: null };
+    });
+  }, []);
+
   const handlePathClick = (index) => {
+    urlWriteModeRef.current = 'push';
+    closeStreamPlayer();
     if (index === 0) {
       setCurrentPath('/');
       setCurrentFolder(fileStructure);
@@ -333,6 +430,8 @@ const FileExplorer = () => {
   };
 
   const handleFolderClick = (folderName) => {
+    urlWriteModeRef.current = 'push';
+    closeStreamPlayer();
     const newPath = currentPath === '/' ? `/${folderName}` : `${currentPath}/${folderName}`;
     setCurrentPath(newPath);
     
@@ -833,118 +932,147 @@ const FileExplorer = () => {
     }
   };
 
-  // Handle file download
-  const handleStreamPlay = async (fileName, e) => {
-    e?.stopPropagation?.();
-    void lockLandscapeForPlayback();
-    streamDebug('play', 'handleStreamPlay click', {
-      fileName,
-      swController: !!navigator.serviceWorker?.controller,
-    });
-
-    try {
-      if (!isConnected || !telegramClient) {
-        streamDebugError('play', 'not connected', new Error('no telegramClient'));
-        setError('Not connected to Telegram. Please authenticate first.');
-        return;
-      }
-      if (!selectedChatId) {
-        setError('No chat group selected.');
-        return;
-      }
-
-      const folder = findFolderByPath(fileStructure, currentPath);
-      if (!folder) {
-        setError(`Folder not found: ${currentPath}`);
-        return;
-      }
-
-      const fileEntry = folder.files.find((f) => f.filename === fileName);
-      if (!fileEntry?.message_id) {
-        setError(`No message ID for file: ${fileName}`);
-        return;
-      }
-
-      setError(null);
-      setStreamPlayer({
-        open: true,
-        url: '',
-        title: fileName,
-        fileId: null,
-      });
-
-      const [resolved] = await Promise.all([
-        resolveTelegramFile(
-          telegramClient,
-          selectedChatId,
-          fileName,
-          fileEntry.message_id,
-        ),
-        prepareForStreaming(telegramClient, { allowReload: true, timeoutMs: 12_000 }).catch(
-          (prepareErr) => {
-            streamDebugError('play', 'prepareForStreaming (parallel)', prepareErr);
-          },
-        ),
-      ]);
-      streamDebug('play', 'resolveTelegramFile OK', {
+  const openStreamForFile = useCallback(
+    async (fileName, e) => {
+      e?.stopPropagation?.();
+      void lockLandscapeForPlayback();
+      streamDebug('play', 'handleStreamPlay click', {
         fileName,
-        fileId: resolved.fileId,
-        size: resolved.size,
-        messageId: resolved.messageId,
-        metadataMessageId: fileEntry.message_id,
+        swController: !!navigator.serviceWorker?.controller,
       });
 
-      if (resolved.messageId !== fileEntry.message_id) {
-        const updatedStructure = addFile(
-          fileStructure,
-          currentPath,
+      try {
+        if (!isConnected || !telegramClient) {
+          streamDebugError('play', 'not connected', new Error('no telegramClient'));
+          setError('Not connected to Telegram. Please authenticate first.');
+          return;
+        }
+        if (!selectedChatId) {
+          setError('No chat group selected.');
+          return;
+        }
+
+        const folder = findFolderByPath(fileStructure, currentPath);
+        if (!folder) {
+          setError(`Folder not found: ${currentPath}`);
+          return;
+        }
+
+        const fileEntry = folder.files.find((f) => f.filename === fileName);
+        if (!fileEntry?.message_id) {
+          setError(`No message ID for file: ${fileName}`);
+          return;
+        }
+
+        if (!isStreamableMediaFileName(fileName)) {
+          setError(`This file type cannot be streamed: ${fileName}`);
+          return;
+        }
+
+        urlWriteModeRef.current = 'push';
+        setError(null);
+        setStreamPlayer({
+          open: true,
+          url: '',
+          title: fileName,
+          fileId: null,
+        });
+
+        const [resolved] = await Promise.all([
+          resolveTelegramFile(
+            telegramClient,
+            selectedChatId,
+            fileName,
+            fileEntry.message_id,
+          ),
+          prepareForStreaming(telegramClient, { allowReload: true, timeoutMs: 12_000 }).catch(
+            (prepareErr) => {
+              streamDebugError('play', 'prepareForStreaming (parallel)', prepareErr);
+            },
+          ),
+        ]);
+        streamDebug('play', 'resolveTelegramFile OK', {
           fileName,
-          resolved.messageId,
+          fileId: resolved.fileId,
+          size: resolved.size,
+          messageId: resolved.messageId,
+          metadataMessageId: fileEntry.message_id,
+        });
+
+        if (resolved.messageId !== fileEntry.message_id) {
+          const updatedStructure = addFile(
+            fileStructure,
+            currentPath,
+            fileName,
+            resolved.messageId,
+          );
+          updateFileStructure(updatedStructure);
+          window.updateTelegramFileStructure?.(updatedStructure).catch((syncError) => {
+            console.warn('Background metadata message_id repair failed:', syncError);
+          });
+        }
+
+        const streamUrl = getStreamUrl({
+          fileId: resolved.fileId,
+          size: resolved.size,
+          mimeType: mimeTypeFromFileName(fileName),
+          fileName,
+        });
+        streamDebug('play', 'stream URL built', { streamUrl, mime: mimeTypeFromFileName(fileName) });
+
+        const headLimit = Math.min(
+          resolved.size > 0 ? resolved.size : 1024 * 1024,
+          1024 * 1024,
         );
-        updateFileStructure(updatedStructure);
-        window.updateTelegramFileStructure?.(updatedStructure).catch((syncError) => {
-          console.warn('Background metadata message_id repair failed:', syncError);
+        if (headLimit > 0) {
+          requestTdlibFilePart(
+            telegramClient,
+            resolved.fileId,
+            resolved.size,
+            0,
+            headLimit,
+          ).catch((prefetchErr) => {
+            streamDebugError('play', 'stream head prefetch', prefetchErr);
+          });
+        }
+
+        registerPlaybackFileId(resolved.fileId);
+        urlWriteModeRef.current = 'push';
+        setStreamPlayer({
+          open: true,
+          url: streamUrl,
+          title: fileName,
+          fileId: resolved.fileId,
         });
+        setSuccess(null);
+      } catch (playError) {
+        streamDebugError('play', 'handleStreamPlay failed', playError);
+        setStreamPlayer({ open: false, url: '', title: '', fileId: null });
+        setError(playError.message || 'Failed to start streaming playback.');
       }
+    },
+    [
+      currentPath,
+      fileStructure,
+      isConnected,
+      selectedChatId,
+      telegramClient,
+      updateFileStructure,
+    ],
+  );
 
-      const streamUrl = getStreamUrl({
-        fileId: resolved.fileId,
-        size: resolved.size,
-        mimeType: mimeTypeFromFileName(fileName),
-        fileName,
-      });
-      streamDebug('play', 'stream URL built', { streamUrl, mime: mimeTypeFromFileName(fileName) });
-
-      const headLimit = Math.min(
-        resolved.size > 0 ? resolved.size : 1024 * 1024,
-        1024 * 1024,
-      );
-      if (headLimit > 0) {
-        requestTdlibFilePart(
-          telegramClient,
-          resolved.fileId,
-          resolved.size,
-          0,
-          headLimit,
-        ).catch((prefetchErr) => {
-          streamDebugError('play', 'stream head prefetch', prefetchErr);
-        });
-      }
-
-      registerPlaybackFileId(resolved.fileId);
-      setStreamPlayer({
-        open: true,
-        url: streamUrl,
-        title: fileName,
-        fileId: resolved.fileId,
-      });
-      setSuccess(null);
-    } catch (playError) {
-      streamDebugError('play', 'handleStreamPlay failed', playError);
-      setStreamPlayer({ open: false, url: '', title: '', fileId: null });
-      setError(playError.message || 'Failed to start streaming playback.');
-    }
+  const handleStreamPlay = (fileName, e) => {
+    void openStreamForFile(fileName, e);
   };
+
+  useEffect(() => {
+    const fileName = pendingPlayFileRef.current;
+    if (!fileName || !currentFolder || !isFileStructureLoaded) {
+      return;
+    }
+    pendingPlayFileRef.current = null;
+    void openStreamForFile(fileName, null);
+  }, [currentPath, currentFolder, isFileStructureLoaded, openStreamForFile]);
 
   const handleDownloadFile = async (fileName, e) => {
     e?.stopPropagation?.();
@@ -1051,7 +1179,7 @@ const FileExplorer = () => {
             {error}
           </div>
         )}
-        
+
         {success && (
           <div className="success-message">
             <FaCheck style={{ marginRight: '8px' }} />
@@ -1196,6 +1324,7 @@ const FileExplorer = () => {
         streamUrl={streamPlayer.url}
         preparePlayback={preparePlayback}
         onClose={() => {
+          urlWriteModeRef.current = 'replace';
           if (streamPlayer.fileId != null) {
             unregisterPlaybackFileId(streamPlayer.fileId);
           }
