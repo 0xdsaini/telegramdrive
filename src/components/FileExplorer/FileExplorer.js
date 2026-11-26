@@ -26,6 +26,7 @@ import { createEmptyFileStructure, findFolderByPath, createFolder, deleteFolder,
 import { TelegramContext } from '../../context/TelegramContext';
 import UntrackedFilesPanel, { useUntrackedFiles } from './UntrackedFilesPanel';
 import UntrackedFilesToggle from './UntrackedFilesToggle';
+import { useExplorerKeyboardNav } from './useExplorerKeyboardNav';
 import {
   parseExplorerUrlFromLocation,
   pushExplorerBrowserUrl,
@@ -97,6 +98,7 @@ const FileExplorer = () => {
   const urlWriteModeRef = useRef('replace');
   const initialUrlAppliedRef = useRef(false);
   const pendingPlayFileRef = useRef(null);
+  const keyboardOpenFileRef = useRef(() => {});
 
   // Access the Telegram context
   const { 
@@ -440,6 +442,28 @@ const FileExplorer = () => {
       setCurrentFolder(targetFolder);
     }
   };
+
+  const goToParent = useCallback(() => {
+    if (currentPath === '/') {
+      return;
+    }
+    handlePathClick(currentPath.split('/').filter(Boolean).length - 1);
+  }, [currentPath, fileStructure]);
+
+  const {
+    selectedIndex,
+    setSelectedIndex,
+    setItemRef,
+    gridItems,
+  } = useExplorerKeyboardNav({
+    currentFolder,
+    currentPath,
+    onOpenFolder: handleFolderClick,
+    onOpenFile: (fileName) => keyboardOpenFileRef.current(fileName),
+    onGoParent: goToParent,
+    streamOpen: streamPlayer.open,
+    untrackedPanelOpen: untrackedFilesState.isPanelVisible,
+  });
 
   // Drag and drop event handlers are defined below
 
@@ -1065,6 +1089,12 @@ const FileExplorer = () => {
     void openStreamForFile(fileName, e);
   };
 
+  keyboardOpenFileRef.current = (fileName) => {
+    if (isStreamableMediaFileName(fileName)) {
+      void openStreamForFile(fileName, null);
+    }
+  };
+
   useEffect(() => {
     const fileName = pendingPlayFileRef.current;
     if (!fileName || !currentFolder || !isFileStructureLoaded) {
@@ -1261,41 +1291,67 @@ const FileExplorer = () => {
             </div>
           ) : (
             <>
-              {currentFolder && currentFolder.subfolders && currentFolder.subfolders.map((folder) => (
-                <div 
-                  key={folder.name} 
-                  className="file-item folder-item"
-                  onClick={() => handleFolderClick(folder.name)}
-                  draggable
-                  onDragStart={(e) => {
-                    e.dataTransfer.setData('text/plain', `folder:${currentPath === '/' ? `/${folder.name}` : `${currentPath}/${folder.name}`}`);
-                  }}
-                  onDragOver={(e) => handleFolderDragOver(e, folder.name)}
-                  onDragLeave={handleFolderDragLeave}
-                  onDrop={(e) => handleFolderDrop(e, folder.name)}
-                >
-                  <FaFolder style={{ fontSize: '42px', color: '#0088cc' }} />
-                  <span className="file-name">{folder.name}</span>
-                  <button 
-                    className="delete-button"
-                    onClick={(e) => handleDeleteFolder(folder.name, e)}
-                    title="Delete folder"
-                  >
-                    <FaTrash />
-                  </button>
-                </div>
-              ))}
-              
-              {currentFolder && currentFolder.files && currentFolder.files.map((file) => {
+              {gridItems.map((item, index) => {
+                const keyboardSelected = selectedIndex === index;
+
+                if (item.type === 'folder') {
+                  const folderName = item.name;
+                  return (
+                    <div
+                      key={item.key}
+                      ref={setItemRef(index)}
+                      className={[
+                        'file-item',
+                        'folder-item',
+                        keyboardSelected ? 'file-item--keyboard-selected' : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' ')}
+                      aria-selected={keyboardSelected || undefined}
+                      onClick={() => {
+                        setSelectedIndex(index);
+                        handleFolderClick(folderName);
+                      }}
+                      draggable
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData(
+                          'text/plain',
+                          `folder:${currentPath === '/' ? `/${folderName}` : `${currentPath}/${folderName}`}`,
+                        );
+                      }}
+                      onDragOver={(e) => handleFolderDragOver(e, folderName)}
+                      onDragLeave={handleFolderDragLeave}
+                      onDrop={(e) => handleFolderDrop(e, folderName)}
+                    >
+                      <FaFolder style={{ fontSize: '42px', color: '#0088cc' }} />
+                      <span className="file-name">{folderName}</span>
+                      <button
+                        className="delete-button"
+                        onClick={(e) => handleDeleteFolder(folderName, e)}
+                        title="Delete folder"
+                      >
+                        <FaTrash />
+                      </button>
+                    </div>
+                  );
+                }
+
+                const file = currentFolder.files.find((f) => f.filename === item.name);
+                if (!file) {
+                  return null;
+                }
                 const isVideo = isVideoFileName(file.filename);
                 const isStreamable = isStreamableMediaFileName(file.filename);
                 return (
                   <FileGridItem
-                    key={file.filename}
+                    key={item.key}
+                    itemRef={setItemRef(index)}
                     filename={file.filename}
                     currentPath={currentPath}
                     isVideo={isVideo}
                     isStreamable={isStreamable}
+                    keyboardSelected={keyboardSelected}
+                    onSelect={() => setSelectedIndex(index)}
                     onPlay={handleStreamPlay}
                     onDownload={handleDownloadFile}
                     onDelete={handleDeleteFile}

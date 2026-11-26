@@ -6,6 +6,9 @@ const FileGridItem = ({
   currentPath,
   isVideo,
   isStreamable,
+  keyboardSelected = false,
+  itemRef,
+  onSelect,
   onPlay,
   onDownload,
   onDelete,
@@ -37,27 +40,27 @@ const FileGridItem = ({
     if (onPlay) onPlay(filename, e);
   };
 
-  const handleKeyDown = (e) => {
-    if (!isStreamable) return;
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      handlePlay(e);
-    }
-  };
-
   const classNames = [
     'file-item',
     isVideo ? 'file-item--video' : '',
     isStreamable && !isVideo ? 'file-item--media' : '',
+    keyboardSelected ? 'file-item--keyboard-selected' : '',
   ]
     .filter(Boolean)
     .join(' ');
 
+  const handleCardClick = (e) => {
+    onSelect?.();
+    if (isStreamable) {
+      handlePlay(e);
+    }
+  };
+
   return (
     <div
+      ref={itemRef}
       className={classNames}
-      tabIndex={isStreamable ? 0 : undefined}
-      role={isStreamable ? 'button' : undefined}
+      aria-selected={keyboardSelected || undefined}
       aria-label={isStreamable ? `Play ${filename}` : filename}
       draggable
       onDragStart={(e) => {
@@ -69,8 +72,7 @@ const FileGridItem = ({
           draggedRef.current = false;
         }, 0);
       }}
-      onClick={isStreamable ? handlePlay : undefined}
-      onKeyDown={handleKeyDown}
+      onClick={handleCardClick}
     >
       <div className="file-card-menu" ref={menuRef}>
         <button
