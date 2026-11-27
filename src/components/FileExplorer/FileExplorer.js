@@ -74,9 +74,23 @@ import {
   replaceExplorerBrowserUrl,
   resolveExplorerLocation,
 } from '../../utils/explorerUrl';
+import { findSiblingSubtitleFile } from '../../utils/siblingSubtitles';
+import {
+  loadSidecarSubtitleObjectUrl,
+  revokeSidecarSubtitleObjectUrl,
+} from '../../utils/loadSidecarSubtitle';
 
 /** User move/delete/rename/create — local tree wins on conflict (no union merge). */
 const EXPLORER_METADATA_SAVE = { saveIntent: 'explorer' };
+
+const CLOSED_STREAM_PLAYER = {
+  open: false,
+  url: '',
+  title: '',
+  fileId: null,
+  audioOnly: false,
+  subtitleTrackUrl: null,
+};
 
 // (function() {
 //   const originalLog = console.log;
@@ -142,13 +156,8 @@ const FileExplorer = () => {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
-  const [streamPlayer, setStreamPlayer] = useState({
-    open: false,
-    url: '',
-    title: '',
-    fileId: null,
-    audioOnly: false,
-  });
+  const [streamPlayer, setStreamPlayer] = useState({ ...CLOSED_STREAM_PLAYER });
+  const sidecarSubtitleUrlRef = useRef(null);
   const urlSuppressRef = useRef(false);
   const urlWriteModeRef = useRef('replace');
   const initialUrlAppliedRef = useRef(false);
@@ -158,6 +167,11 @@ const FileExplorer = () => {
   const explorerContentRef = useRef(null);
   const explorerScrollSnapshotRef = useRef(null);
   const [showDesktopNavChrome, setShowDesktopNavChrome] = useState(() => isDesktopFinePointer());
+
+  const clearSidecarSubtitleBlob = useCallback(() => {
+    revokeSidecarSubtitleObjectUrl(sidecarSubtitleUrlRef.current);
+    sidecarSubtitleUrlRef.current = null;
+  }, []);
 
   const getExplorerScrollTargets = useCallback(() => {
     const targets = [explorerContentRef.current, explorerRootRef.current];
@@ -297,10 +311,11 @@ const FileExplorer = () => {
         if (streamPlayer.fileId != null) {
           unregisterPlaybackFileId(streamPlayer.fileId);
         }
-        setStreamPlayer({ open: false, url: '', title: '', fileId: null, audioOnly: false });
+        clearSidecarSubtitleBlob();
+        setStreamPlayer({ ...CLOSED_STREAM_PLAYER });
       }
     },
-    [fileStructure, streamPlayer.fileId, streamPlayer.open],
+    [fileStructure, streamPlayer.fileId, streamPlayer.open, clearSidecarSubtitleBlob],
   );
 
   useEffect(() => {
@@ -672,6 +687,7 @@ const FileExplorer = () => {
   // to manage the file structure
 
   const closeStreamPlayer = useCallback(() => {
+    clearSidecarSubtitleBlob();
     setStreamPlayer((prev) => {
       if (prev.fileId != null) {
         unregisterPlaybackFileId(prev.fileId);
@@ -679,9 +695,9 @@ const FileExplorer = () => {
       if (!prev.open) {
         return prev;
       }
-      return { open: false, url: '', title: '', fileId: null, audioOnly: false };
+      return { ...CLOSED_STREAM_PLAYER };
     });
-  }, []);
+  }, [clearSidecarSubtitleBlob]);
 
   const handlePathClick = (index) => {
     urlWriteModeRef.current = 'push';
@@ -1427,6 +1443,9 @@ const FileExplorer = () => {
           return;
         }
 
+        clearSidecarSubtitleBlob();
+        const sidecarEntry = findSiblingSubtitleFile(folder.files, fileName);
+
         urlWriteModeRef.current = 'push';
         setError(null);
         setStreamPlayer({
@@ -1435,6 +1454,7 @@ const FileExplorer = () => {
           title: fileName,
           fileId: null,
           audioOnly: isAudioFileName(fileName),
+          subtitleTrackUrl: null,
         });
 
         const [resolved] = await Promise.all([
@@ -1460,7 +1480,8 @@ const FileExplorer = () => {
 
         const mimeType = mimeTypeFromTelegramContent(resolved.message, fileName);
         if (!isStreamableMimeType(mimeType)) {
-          setStreamPlayer({ open: false, url: '', title: '', fileId: null, audioOnly: false });
+          clearSidecarSubtitleBlob();
+          setStreamPlayer({ ...CLOSED_STREAM_PLAYER });
           setError(`This file type cannot be streamed: ${fileName}`);
           return;
         }
@@ -1501,11 +1522,32 @@ const FileExplorer = () => {
           title: fileName,
           fileId: resolved.fileId,
           audioOnly,
+          subtitleTrackUrl: null,
         });
+
+        if (sidecarEntry && !audioOnly) {
+          loadSidecarSubtitleObjectUrl(telegramClient, selectedChatId, sidecarEntry)
+            .then((subtitleUrl) => {
+              setStreamPlayer((prev) => {
+                if (!prev.open || prev.title !== fileName) {
+                  revokeSidecarSubtitleObjectUrl(subtitleUrl);
+                  return prev;
+                }
+                clearSidecarSubtitleBlob();
+                sidecarSubtitleUrlRef.current = subtitleUrl;
+                return { ...prev, subtitleTrackUrl: subtitleUrl };
+              });
+            })
+            .catch((subErr) => {
+              streamDebugError('play', 'sidecar subtitle', subErr);
+            });
+        }
+
         setSuccess(null);
       } catch (playError) {
         streamDebugError('play', 'handleStreamPlay failed', playError);
-        setStreamPlayer({ open: false, url: '', title: '', fileId: null, audioOnly: false });
+        clearSidecarSubtitleBlob();
+        setStreamPlayer({ ...CLOSED_STREAM_PLAYER });
         setError(playError.message || 'Failed to start streaming playback.');
       }
     },
@@ -1517,6 +1559,7 @@ const FileExplorer = () => {
       telegramClient,
       updateFileStructure,
       captureExplorerScroll,
+      clearSidecarSubtitleBlob,
     ],
   );
 
@@ -1838,13 +1881,15 @@ const FileExplorer = () => {
         title={streamPlayer.title}
         streamUrl={streamPlayer.url}
         audioOnly={streamPlayer.audioOnly}
+        subtitleTrackUrl={streamPlayer.subtitleTrackUrl}
         preparePlayback={preparePlayback}
         onClose={() => {
           urlWriteModeRef.current = 'replace';
           if (streamPlayer.fileId != null) {
             unregisterPlaybackFileId(streamPlayer.fileId);
           }
-          setStreamPlayer({ open: false, url: '', title: '', fileId: null, audioOnly: false });
+          clearSidecarSubtitleBlob();
+          setStreamPlayer({ ...CLOSED_STREAM_PLAYER });
         }}
       />
     </div>

@@ -20,6 +20,13 @@ import {
   selectAudioTrackByKey,
   writeSavedAudioTrackKey,
 } from '../../utils/videoAudioTracks';
+import {
+  applyInitialSubtitleTrackSelection,
+  collectSubtitleTrackChoices,
+  selectSubtitleTrackByKey,
+  syncActiveSubtitleTrackKey,
+  SUBTITLE_OFF_KEY,
+} from '../../utils/videoSubtitleTracks';
 import { streamDebug, streamDebugError } from '../../utils/streamDebug';
 import {
   isPortraitViewport,
@@ -105,7 +112,15 @@ function syncActiveAudioTrackKey(video) {
   return audioTrackKey(tracks[0], 0);
 }
 
-const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, audioOnly = false }) => {
+const VideoPlayerModal = ({
+  open,
+  title,
+  streamUrl,
+  onClose,
+  preparePlayback,
+  audioOnly = false,
+  subtitleTrackUrl = null,
+}) => {
   const stageRef = useRef(null);
   const videoRef = useRef(null);
   const touchGestureRef = useRef(null);
@@ -165,6 +180,8 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
   const [speedBoostVisible, setSpeedBoostVisible] = useState(false);
   const [audioTrackChoices, setAudioTrackChoices] = useState([]);
   const [selectedAudioTrackKey, setSelectedAudioTrackKey] = useState('');
+  const [subtitleTrackChoices, setSubtitleTrackChoices] = useState([]);
+  const [selectedSubtitleTrackKey, setSelectedSubtitleTrackKey] = useState(SUBTITLE_OFF_KEY);
 
   const bumpControlsVisible = useCallback(() => {
     setShowControls(true);
@@ -187,6 +204,27 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
       bumpControlsVisible();
     },
     [streamUrl, bumpControlsVisible]
+  );
+
+  const refreshSubtitleTracksUi = useCallback((video) => {
+    if (!video || audioOnly) {
+      setSubtitleTrackChoices([]);
+      setSelectedSubtitleTrackKey(SUBTITLE_OFF_KEY);
+      return;
+    }
+    const { choices, activeKey } = applyInitialSubtitleTrackSelection(video);
+    setSubtitleTrackChoices(choices);
+    setSelectedSubtitleTrackKey(activeKey);
+  }, [audioOnly]);
+
+  const selectSubtitleTrack = useCallback(
+    (trackKey) => {
+      const video = videoRef.current;
+      if (!video || !selectSubtitleTrackByKey(video, trackKey)) return;
+      setSelectedSubtitleTrackKey(trackKey);
+      bumpControlsVisible();
+    },
+    [bumpControlsVisible],
   );
 
   const togglePlay = useCallback(() => {
@@ -1056,6 +1094,7 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
           const { choices, activeKey } = applyInitialAudioTrackSelection(video, saved);
           setAudioTrackChoices(choices);
           setSelectedAudioTrackKey(activeKey);
+          refreshSubtitleTracksUi(video);
         }
         if (name === 'playing') setIsWaiting(false);
         if (name === 'waiting') setIsWaiting(true);
@@ -1085,6 +1124,17 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
     if (audioTrackList?.addEventListener) {
       audioTrackList.addEventListener('change', onAudioTracksChanged);
       audioTrackList.addEventListener('addtrack', onAudioTracksChanged);
+    }
+
+    const onTextTracksChanged = () => {
+      if (audioOnly) return;
+      setSubtitleTrackChoices(collectSubtitleTrackChoices(video.textTracks));
+      setSelectedSubtitleTrackKey(syncActiveSubtitleTrackKey(video));
+    };
+    const textTrackList = video.textTracks;
+    if (textTrackList?.addEventListener) {
+      textTrackList.addEventListener('change', onTextTracksChanged);
+      textTrackList.addEventListener('addtrack', onTextTracksChanged);
     }
 
     const setSrc = (url) => {
@@ -1143,6 +1193,10 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
         audioTrackList.removeEventListener('change', onAudioTracksChanged);
         audioTrackList.removeEventListener('addtrack', onAudioTracksChanged);
       }
+      if (textTrackList?.removeEventListener) {
+        textTrackList.removeEventListener('change', onTextTracksChanged);
+        textTrackList.removeEventListener('addtrack', onTextTracksChanged);
+      }
       video.pause();
       if (previousSrc && isStreamUrl(previousSrc)) {
         toggleStreamInUse(previousSrc, false);
@@ -1151,7 +1205,15 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
       video.load();
       if (hideControlsTimer.current) clearTimeout(hideControlsTimer.current);
     };
-  }, [open, streamUrl, bumpControlsVisible, preparePlayback, audioOnly]);
+  }, [open, streamUrl, bumpControlsVisible, preparePlayback, audioOnly, refreshSubtitleTracksUi]);
+
+  useEffect(() => {
+    if (!open || audioOnly || !subtitleTrackUrl) return undefined;
+    const video = videoRef.current;
+    if (!video) return undefined;
+    const timer = window.setTimeout(() => refreshSubtitleTracksUi(video), 0);
+    return () => window.clearTimeout(timer);
+  }, [open, audioOnly, subtitleTrackUrl, refreshSubtitleTracksUi]);
 
   const handleProgressPointer = (clientX, rect) => {
     if (!Number.isFinite(duration) || duration <= 0) return;
@@ -1207,7 +1269,7 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
         ? Math.max(0, normalLi.offsetTop - heading.offsetHeight)
         : Math.max(0, normalLi.offsetTop);
     });
-  }, [open, showSettings, audioTrackChoices.length, audioOnly]);
+  }, [open, showSettings, audioTrackChoices.length, subtitleTrackChoices.length, audioOnly]);
 
   if (!open) {
     return null;
@@ -1218,7 +1280,11 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
     swipeDismissY > 0 ? Math.max(0.2, 1 - swipeDismissY / 480) : undefined;
   const absoluteStreamUrl = open ? getAbsoluteStreamUrl(streamUrl) : null;
   const showAudioTrackMenu = !audioOnly && audioTrackChoices.length >= 2;
-  const settingsMenuExtraClass = showAudioTrackMenu ? ' yt-player-settings-menu--with-audio' : '';
+  const showSubtitleTrackMenu = !audioOnly && subtitleTrackChoices.length >= 2;
+  const settingsMenuExtraClass = [
+    showAudioTrackMenu ? ' yt-player-settings-menu--with-audio' : '',
+    showSubtitleTrackMenu ? ' yt-player-settings-menu--with-subtitles' : '',
+  ].join('');
 
   const renderSettingsMenu = (positionClass) => (
     <ul
@@ -1261,6 +1327,27 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
                 aria-checked={selectedAudioTrackKey === choice.key}
                 className={selectedAudioTrackKey === choice.key ? 'is-active' : ''}
                 onClick={() => selectAudioTrack(choice.key)}
+              >
+                {choice.label}
+              </button>
+            </li>
+          ))}
+        </>
+      ) : null}
+      {showSubtitleTrackMenu ? (
+        <>
+          <li className="yt-player-settings-menu-divider" role="separator" />
+          <li className="yt-player-settings-menu-heading" role="presentation">
+            Subtitles
+          </li>
+          {subtitleTrackChoices.map((choice) => (
+            <li key={choice.key} role="none">
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={selectedSubtitleTrackKey === choice.key}
+                className={selectedSubtitleTrackKey === choice.key ? 'is-active' : ''}
+                onClick={() => selectSubtitleTrack(choice.key)}
               >
                 {choice.label}
               </button>
@@ -1374,7 +1461,17 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
               disablePictureInPicture
               controlsList="nodownload noremoteplayback"
               onContextMenu={preventVideoContextMenu}
-            />
+            >
+              {subtitleTrackUrl ? (
+                <track
+                  kind="subtitles"
+                  src={subtitleTrackUrl}
+                  srcLang="en"
+                  label="Subtitles"
+                  default
+                />
+              ) : null}
+            </video>
           </div>
 
           {IS_COARSE_POINTER ? (
