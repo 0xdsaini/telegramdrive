@@ -553,7 +553,9 @@
   font-size: 0.85rem;
   border-radius: 8px;
   z-index: 3;
-  pointer-events: none;
+  pointer-events: auto;
+  user-select: text;
+  word-break: break-word;
 }
 
 .yt-player-controls {

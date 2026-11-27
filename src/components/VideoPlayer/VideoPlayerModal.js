@@ -82,6 +82,42 @@ function getBufferSegments(video) {
   return segments;
 }
 
+const UNSUPPORTED_AUDIO_FFMPEG_CMD =
+  'ffmpeg -i INPUT_FILENAME.extension -map 0:v:0 -map 0:a -c:v copy -c:a aac -ac 2 OUTPUT_FILENAME.extension';
+
+const UNSUPPORTED_AUDIO_HINT =
+  `Audio on this file is not supported. Run ${UNSUPPORTED_AUDIO_FFMPEG_CMD} and re-upload.`;
+
+function isEnglishAudioLanguage(language) {
+  const lang = (language || '').toLowerCase();
+  return lang === 'eng' || lang === 'en' || lang.startsWith('en-');
+}
+
+/** When multiple audio tracks exist, use English if present; otherwise keep browser default. */
+function preferEnglishAudioTrack(video) {
+  const tracks = video?.audioTracks;
+  if (!tracks?.length || tracks.length < 2) {
+    return;
+  }
+  let englishTrack = null;
+  for (let i = 0; i < tracks.length; i += 1) {
+    if (isEnglishAudioLanguage(tracks[i].language)) {
+      englishTrack = tracks[i];
+      break;
+    }
+  }
+  if (!englishTrack) {
+    return;
+  }
+  for (let i = 0; i < tracks.length; i += 1) {
+    tracks[i].enabled = tracks[i] === englishTrack;
+  }
+  streamDebug('video', 'preferEnglishAudioTrack', {
+    trackCount: tracks.length,
+    language: englishTrack.language,
+  });
+}
+
 const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, audioOnly = false }) => {
   const stageRef = useRef(null);
   const videoRef = useRef(null);
@@ -977,7 +1013,11 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
       const fn = () => {
         logVideoState(name);
         if (name === 'error' && video.error) {
-          const msg = `MediaError code=${video.error.code} ${video.error.message || ''}`;
+          const decodeOrFormat =
+            video.error.code === 3 || video.error.code === 4;
+          const msg = decodeOrFormat
+            ? UNSUPPORTED_AUDIO_HINT
+            : `MediaError code=${video.error.code} ${video.error.message || ''}`;
           setLastVideoError(msg);
           streamDebugError('video', 'element error', new Error(msg));
           const retryable =
@@ -1006,6 +1046,9 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
               }
             })();
           }
+        }
+        if (name === 'loadedmetadata') {
+          preferEnglishAudioTrack(video);
         }
         if (name === 'playing') setIsWaiting(false);
         if (name === 'waiting') setIsWaiting(true);
