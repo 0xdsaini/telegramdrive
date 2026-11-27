@@ -406,19 +406,24 @@
   z-index: 6;
 }
 
+/* Corner status chip: keeps center frame clear during long 2× holds */
 .yt-player-speed-boost__badge {
   position: absolute;
-  top: 14%;
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 6px 14px;
-  border-radius: 4px;
-  background: rgba(0, 0, 0, 0.72);
+  top: max(10px, env(safe-area-inset-top, 0px));
+  right: max(10px, env(safe-area-inset-right, 0px));
+  left: auto;
+  transform: none;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.62);
   color: #fff;
-  font-size: 0.95rem;
+  font-size: 0.82rem;
   font-weight: 700;
-  letter-spacing: 0.02em;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.45);
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+  box-shadow: 0 1px 8px rgba(0, 0, 0, 0.4);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
 }
 
 .yt-player-speed-boost__chevrons {
