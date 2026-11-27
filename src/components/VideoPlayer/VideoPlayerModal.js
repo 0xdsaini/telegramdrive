@@ -34,6 +34,7 @@ import {
   lockPortraitForPlayback,
   unlockPlaybackOrientation,
 } from '../../utils/playbackOrientation';
+import VideoSubtitleOverlay from './VideoSubtitleOverlay';
 import './VideoPlayerModal.css';
 
 const VIDEO_EVENTS = [
@@ -1581,6 +1582,13 @@ const VideoPlayerModal = ({
 
           {lastVideoError ? (
             <div className="yt-player-error-banner">{lastVideoError}</div>
+          ) : null}
+
+          {!audioOnly ? (
+            <VideoSubtitleOverlay
+              videoRef={videoRef}
+              enabled={selectedSubtitleTrackKey !== SUBTITLE_OFF_KEY}
+            />
           ) : null}
         </div>
 

@@ -2,6 +2,9 @@ import { streamDebug } from './streamDebug';
 
 export const SUBTITLE_OFF_KEY = 'off';
 
+/** Parse cues without painting the browser's default caption renderer */
+export const SUBTITLE_TRACK_DISPLAY_MODE = 'hidden';
+
 function isTextSubtitleTrack(track) {
   if (!track) return false;
   return track.kind === 'subtitles' || track.kind === 'captions';
@@ -41,7 +44,10 @@ export function syncActiveSubtitleTrackKey(video) {
   if (!tracks?.length) return SUBTITLE_OFF_KEY;
   for (let i = 0; i < tracks.length; i += 1) {
     const track = tracks[i];
-    if (isTextSubtitleTrack(track) && track.mode === 'showing') {
+    if (
+      isTextSubtitleTrack(track)
+      && (track.mode === 'showing' || track.mode === SUBTITLE_TRACK_DISPLAY_MODE)
+    ) {
       return subtitleTrackKey(track, i);
     }
   }
@@ -70,8 +76,8 @@ export function selectSubtitleTrackByKey(video, key) {
     const track = tracks[i];
     if (!isTextSubtitleTrack(track)) continue;
     if (subtitleTrackKey(track, i) === key) {
-      track.mode = 'showing';
-      streamDebug('subtitle', 'select: showing', { key, label: track.label });
+      track.mode = SUBTITLE_TRACK_DISPLAY_MODE;
+      streamDebug('subtitle', 'select: active', { key, label: track.label });
       return true;
     }
   }
@@ -94,8 +100,11 @@ export function applyInitialSubtitleTrackSelection(video) {
   for (let i = 0; i < tracks.length; i += 1) {
     const track = tracks[i];
     if (!isTextSubtitleTrack(track)) continue;
-    if (track.mode === 'showing') {
+    if (track.mode === 'showing' || track.mode === SUBTITLE_TRACK_DISPLAY_MODE) {
       activeKey = subtitleTrackKey(track, i);
+      if (track.mode === 'showing') {
+        track.mode = SUBTITLE_TRACK_DISPLAY_MODE;
+      }
       break;
     }
   }
@@ -105,7 +114,7 @@ export function applyInitialSubtitleTrackSelection(video) {
     if (firstSubIndex != null) {
       const track = tracks[firstSubIndex];
       if (track) {
-        track.mode = 'showing';
+        track.mode = SUBTITLE_TRACK_DISPLAY_MODE;
         activeKey = subtitleTrackKey(track, firstSubIndex);
       }
     }

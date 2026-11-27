@@ -23,7 +23,7 @@ describe('videoSubtitleTracks', () => {
     const video = { textTracks };
     const { choices, activeKey } = applyInitialSubtitleTrackSelection(video);
     expect(choices.length).toBeGreaterThan(1);
-    expect(textTracks[0].mode).toBe('showing');
+    expect(textTracks[0].mode).toBe('hidden');
     expect(activeKey).not.toBe(SUBTITLE_OFF_KEY);
   });
 });
