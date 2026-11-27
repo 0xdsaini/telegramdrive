@@ -85,6 +85,7 @@ function getBufferSegments(video) {
 const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, audioOnly = false }) => {
   const stageRef = useRef(null);
   const videoRef = useRef(null);
+  const touchGestureRef = useRef(null);
   const swipeDismissYRef = useRef(0);
   const swipeGestureRef = useRef({
     startX: 0,
@@ -414,11 +415,21 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
     return 'center';
   }, []);
 
+  const preventVideoContextMenu = useCallback((e) => {
+    e.preventDefault();
+  }, []);
+
   const handleVideoTouchStart = useCallback(
     (e) => {
       if (e.touches.length !== 1) {
         resetSpeedBoost();
         return;
+      }
+      if (IS_COARSE_POINTER && !audioOnly) {
+        const video = videoRef.current;
+        if (video && !video.paused && !video.ended) {
+          e.preventDefault();
+        }
       }
       const rect = e.currentTarget.getBoundingClientRect();
       touchSessionRef.current = {
@@ -429,7 +440,7 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
       armSpeedBoostHold(e.touches[0]);
       bumpControlsVisible();
     },
-    [armSpeedBoostHold, bumpControlsVisible, resetSpeedBoost, showControls]
+    [armSpeedBoostHold, audioOnly, bumpControlsVisible, resetSpeedBoost, showControls]
   );
 
   const handleVideoTouchMove = useCallback(
@@ -437,6 +448,10 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
       if (!IS_COARSE_POINTER || audioOnly) return;
       const boost = speedBoostRef.current;
       if (boost.touchId == null) return;
+
+      if (boost.active || boost.touchId != null) {
+        e.preventDefault();
+      }
 
       if (e.touches.length !== 1) {
         if (boost.active) {
@@ -770,6 +785,26 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
     el.addEventListener('touchmove', onMove, { passive: false });
     return () => el.removeEventListener('touchmove', onMove);
   }, [open, handleStageSwipeTouchMove]);
+
+  useEffect(() => {
+    if (!open || !IS_COARSE_POINTER) return undefined;
+    const el = touchGestureRef.current;
+    if (!el) return undefined;
+    const onMove = (e) => handleVideoTouchMove(e);
+    const onStartCapture = (e) => {
+      if (audioOnly || e.touches.length !== 1) return;
+      const video = videoRef.current;
+      if (video && !video.paused && !video.ended) {
+        e.preventDefault();
+      }
+    };
+    el.addEventListener('touchmove', onMove, { passive: false });
+    el.addEventListener('touchstart', onStartCapture, { passive: false, capture: true });
+    return () => {
+      el.removeEventListener('touchmove', onMove);
+      el.removeEventListener('touchstart', onStartCapture, { capture: true });
+    };
+  }, [open, audioOnly, handleVideoTouchMove]);
 
   useEffect(() => {
     if (!immersiveMode) return undefined;
@@ -1146,12 +1181,7 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
 
         <div
           className={`yt-player-video-wrap${audioOnly ? ' yt-player-video-wrap--audio' : ''}`}
-          onClick={handleVideoAreaClick}
-          onTouchStart={handleVideoTouchStart}
-          onTouchMove={handleVideoTouchMove}
-          onTouchEnd={handleVideoTouchEnd}
-          onTouchCancel={handleVideoTouchCancel}
-          onDoubleClick={swallowVideoDoubleClick}
+          onContextMenu={preventVideoContextMenu}
           role="presentation"
         >
           {audioOnly ? (
@@ -1162,10 +1192,27 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
               </p>
             </div>
           ) : null}
-          <video
-            ref={videoRef}
-            className={`yt-player-video${audioOnly ? ' yt-player-video--audio' : ''}`}
-            playsInline
+          <div className="yt-player-video-container" aria-hidden>
+            <video
+              ref={videoRef}
+              className={`yt-player-video${audioOnly ? ' yt-player-video--audio' : ''}`}
+              playsInline
+              disablePictureInPicture
+              controlsList="nodownload noremoteplayback"
+              onContextMenu={preventVideoContextMenu}
+            />
+          </div>
+
+          <div
+            ref={touchGestureRef}
+            className="yt-player-touch-gesture"
+            aria-hidden
+            onClick={handleVideoAreaClick}
+            onTouchStart={handleVideoTouchStart}
+            onTouchEnd={handleVideoTouchEnd}
+            onTouchCancel={handleVideoTouchCancel}
+            onDoubleClick={swallowVideoDoubleClick}
+            onContextMenu={preventVideoContextMenu}
           />
 
           {(isPreparing || isWaiting) && !lastVideoError ? (
