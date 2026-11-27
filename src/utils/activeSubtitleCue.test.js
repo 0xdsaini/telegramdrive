@@ -14,6 +14,21 @@ describe('getActiveSubtitleCueLines', () => {
     expect(getActiveSubtitleCueLines(video)).toEqual(['Hello', 'world']);
   });
 
+  it('falls back to cues list when activeCues is empty', () => {
+    const video = {
+      currentTime: 1,
+      textTracks: [
+        {
+          kind: 'subtitles',
+          mode: 'hidden',
+          activeCues: [],
+          cues: [{ startTime: 0, endTime: 3, text: 'Desktop cue' }],
+        },
+      ],
+    };
+    expect(getActiveSubtitleCueLines(video)).toEqual(['Desktop cue']);
+  });
+
   it('limits to two lines', () => {
     const video = {
       textTracks: [

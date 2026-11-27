@@ -22,9 +22,7 @@ import {
 } from '../../utils/videoAudioTracks';
 import {
   applyInitialSubtitleTrackSelection,
-  collectSubtitleTrackChoices,
   selectSubtitleTrackByKey,
-  syncActiveSubtitleTrackKey,
   SUBTITLE_OFF_KEY,
 } from '../../utils/videoSubtitleTracks';
 import { streamDebug, streamDebugError } from '../../utils/streamDebug';
@@ -120,7 +118,7 @@ const VideoPlayerModal = ({
   onClose,
   preparePlayback,
   audioOnly = false,
-  subtitleTrackUrl = null,
+  subtitleVttText = null,
 }) => {
   const stageRef = useRef(null);
   const videoRef = useRef(null);
@@ -207,25 +205,36 @@ const VideoPlayerModal = ({
     [streamUrl, bumpControlsVisible]
   );
 
-  const refreshSubtitleTracksUi = useCallback((video) => {
-    if (!video || audioOnly) {
-      setSubtitleTrackChoices([]);
-      setSelectedSubtitleTrackKey(SUBTITLE_OFF_KEY);
-      return;
-    }
-    const { choices, activeKey } = applyInitialSubtitleTrackSelection(video);
-    setSubtitleTrackChoices(choices);
-    setSelectedSubtitleTrackKey(activeKey);
-  }, [audioOnly]);
+  const refreshSubtitleTracksUi = useCallback(
+    (video) => {
+      if (!video || audioOnly) {
+        setSubtitleTrackChoices([]);
+        setSelectedSubtitleTrackKey(SUBTITLE_OFF_KEY);
+        return;
+      }
+      const { choices, activeKey } = applyInitialSubtitleTrackSelection(
+        video,
+        subtitleVttText,
+      );
+      setSubtitleTrackChoices(choices);
+      setSelectedSubtitleTrackKey((prev) => {
+        if (prev !== SUBTITLE_OFF_KEY && choices.some((choice) => choice.key === prev)) {
+          return prev;
+        }
+        return activeKey;
+      });
+    },
+    [audioOnly, subtitleVttText],
+  );
 
   const selectSubtitleTrack = useCallback(
     (trackKey) => {
       const video = videoRef.current;
-      if (!video || !selectSubtitleTrackByKey(video, trackKey)) return;
+      if (!video || !selectSubtitleTrackByKey(video, trackKey, subtitleVttText)) return;
       setSelectedSubtitleTrackKey(trackKey);
       bumpControlsVisible();
     },
-    [bumpControlsVisible],
+    [bumpControlsVisible, subtitleVttText],
   );
 
   const togglePlay = useCallback(() => {
@@ -1129,8 +1138,7 @@ const VideoPlayerModal = ({
 
     const onTextTracksChanged = () => {
       if (audioOnly) return;
-      setSubtitleTrackChoices(collectSubtitleTrackChoices(video.textTracks));
-      setSelectedSubtitleTrackKey(syncActiveSubtitleTrackKey(video));
+      refreshSubtitleTracksUi(video);
     };
     const textTrackList = video.textTracks;
     if (textTrackList?.addEventListener) {
@@ -1209,12 +1217,12 @@ const VideoPlayerModal = ({
   }, [open, streamUrl, bumpControlsVisible, preparePlayback, audioOnly, refreshSubtitleTracksUi]);
 
   useEffect(() => {
-    if (!open || audioOnly || !subtitleTrackUrl) return undefined;
+    if (!open || audioOnly) return undefined;
     const video = videoRef.current;
     if (!video) return undefined;
-    const timer = window.setTimeout(() => refreshSubtitleTracksUi(video), 0);
-    return () => window.clearTimeout(timer);
-  }, [open, audioOnly, subtitleTrackUrl, refreshSubtitleTracksUi]);
+    refreshSubtitleTracksUi(video);
+    return undefined;
+  }, [open, audioOnly, subtitleVttText, refreshSubtitleTracksUi]);
 
   const handleProgressPointer = (clientX, rect) => {
     if (!Number.isFinite(duration) || duration <= 0) return;
@@ -1462,17 +1470,7 @@ const VideoPlayerModal = ({
               disablePictureInPicture
               controlsList="nodownload noremoteplayback"
               onContextMenu={preventVideoContextMenu}
-            >
-              {subtitleTrackUrl ? (
-                <track
-                  kind="subtitles"
-                  src={subtitleTrackUrl}
-                  srcLang="en"
-                  label="Subtitles"
-                  default
-                />
-              ) : null}
-            </video>
+            />
           </div>
 
           {IS_COARSE_POINTER ? (
@@ -1588,6 +1586,8 @@ const VideoPlayerModal = ({
             <VideoSubtitleOverlay
               videoRef={videoRef}
               enabled={selectedSubtitleTrackKey !== SUBTITLE_OFF_KEY}
+              subtitleVttText={subtitleVttText}
+              open={open}
             />
           ) : null}
         </div>

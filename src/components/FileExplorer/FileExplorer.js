@@ -75,10 +75,7 @@ import {
   resolveExplorerLocation,
 } from '../../utils/explorerUrl';
 import { findSiblingSubtitleFile } from '../../utils/siblingSubtitles';
-import {
-  loadSidecarSubtitleObjectUrl,
-  revokeSidecarSubtitleObjectUrl,
-} from '../../utils/loadSidecarSubtitle';
+import { loadSidecarSubtitleVtt } from '../../utils/loadSidecarSubtitle';
 
 /** User move/delete/rename/create — local tree wins on conflict (no union merge). */
 const EXPLORER_METADATA_SAVE = { saveIntent: 'explorer' };
@@ -89,7 +86,7 @@ const CLOSED_STREAM_PLAYER = {
   title: '',
   fileId: null,
   audioOnly: false,
-  subtitleTrackUrl: null,
+  subtitleVttText: null,
 };
 
 // (function() {
@@ -157,7 +154,6 @@ const FileExplorer = () => {
   const [uploadProgress, setUploadProgress] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const [streamPlayer, setStreamPlayer] = useState({ ...CLOSED_STREAM_PLAYER });
-  const sidecarSubtitleUrlRef = useRef(null);
   const urlSuppressRef = useRef(false);
   const urlWriteModeRef = useRef('replace');
   const initialUrlAppliedRef = useRef(false);
@@ -168,9 +164,10 @@ const FileExplorer = () => {
   const explorerScrollSnapshotRef = useRef(null);
   const [showDesktopNavChrome, setShowDesktopNavChrome] = useState(() => isDesktopFinePointer());
 
-  const clearSidecarSubtitleBlob = useCallback(() => {
-    revokeSidecarSubtitleObjectUrl(sidecarSubtitleUrlRef.current);
-    sidecarSubtitleUrlRef.current = null;
+  const clearSidecarSubtitleState = useCallback(() => {
+    setStreamPlayer((prev) => (
+      prev.subtitleVttText ? { ...prev, subtitleVttText: null } : prev
+    ));
   }, []);
 
   const getExplorerScrollTargets = useCallback(() => {
@@ -311,11 +308,11 @@ const FileExplorer = () => {
         if (streamPlayer.fileId != null) {
           unregisterPlaybackFileId(streamPlayer.fileId);
         }
-        clearSidecarSubtitleBlob();
+        clearSidecarSubtitleState();
         setStreamPlayer({ ...CLOSED_STREAM_PLAYER });
       }
     },
-    [fileStructure, streamPlayer.fileId, streamPlayer.open, clearSidecarSubtitleBlob],
+    [fileStructure, streamPlayer.fileId, streamPlayer.open, clearSidecarSubtitleState],
   );
 
   useEffect(() => {
@@ -687,7 +684,7 @@ const FileExplorer = () => {
   // to manage the file structure
 
   const closeStreamPlayer = useCallback(() => {
-    clearSidecarSubtitleBlob();
+    clearSidecarSubtitleState();
     setStreamPlayer((prev) => {
       if (prev.fileId != null) {
         unregisterPlaybackFileId(prev.fileId);
@@ -697,7 +694,7 @@ const FileExplorer = () => {
       }
       return { ...CLOSED_STREAM_PLAYER };
     });
-  }, [clearSidecarSubtitleBlob]);
+  }, [clearSidecarSubtitleState]);
 
   const handlePathClick = (index) => {
     urlWriteModeRef.current = 'push';
@@ -1443,7 +1440,7 @@ const FileExplorer = () => {
           return;
         }
 
-        clearSidecarSubtitleBlob();
+        clearSidecarSubtitleState();
         const sidecarEntry = findSiblingSubtitleFile(folder.files, fileName);
 
         urlWriteModeRef.current = 'push';
@@ -1454,7 +1451,7 @@ const FileExplorer = () => {
           title: fileName,
           fileId: null,
           audioOnly: isAudioFileName(fileName),
-          subtitleTrackUrl: null,
+          subtitleVttText: null,
         });
 
         const [resolved] = await Promise.all([
@@ -1480,7 +1477,7 @@ const FileExplorer = () => {
 
         const mimeType = mimeTypeFromTelegramContent(resolved.message, fileName);
         if (!isStreamableMimeType(mimeType)) {
-          clearSidecarSubtitleBlob();
+          clearSidecarSubtitleState();
           setStreamPlayer({ ...CLOSED_STREAM_PLAYER });
           setError(`This file type cannot be streamed: ${fileName}`);
           return;
@@ -1522,31 +1519,31 @@ const FileExplorer = () => {
           title: fileName,
           fileId: resolved.fileId,
           audioOnly,
-          subtitleTrackUrl: null,
+          subtitleVttText: null,
         });
 
         if (sidecarEntry && !audioOnly) {
-          loadSidecarSubtitleObjectUrl(telegramClient, selectedChatId, sidecarEntry)
-            .then((subtitleUrl) => {
+          void (async () => {
+            try {
+              const subtitleVttText = await loadSidecarSubtitleVtt(
+                telegramClient,
+                selectedChatId,
+                sidecarEntry,
+              );
               setStreamPlayer((prev) => {
-                if (!prev.open || prev.title !== fileName) {
-                  revokeSidecarSubtitleObjectUrl(subtitleUrl);
-                  return prev;
-                }
-                clearSidecarSubtitleBlob();
-                sidecarSubtitleUrlRef.current = subtitleUrl;
-                return { ...prev, subtitleTrackUrl: subtitleUrl };
+                if (!prev.open || prev.title !== fileName) return prev;
+                return { ...prev, subtitleVttText };
               });
-            })
-            .catch((subErr) => {
+            } catch (subErr) {
               streamDebugError('play', 'sidecar subtitle', subErr);
-            });
+            }
+          })();
         }
 
         setSuccess(null);
       } catch (playError) {
         streamDebugError('play', 'handleStreamPlay failed', playError);
-        clearSidecarSubtitleBlob();
+        clearSidecarSubtitleState();
         setStreamPlayer({ ...CLOSED_STREAM_PLAYER });
         setError(playError.message || 'Failed to start streaming playback.');
       }
@@ -1559,7 +1556,7 @@ const FileExplorer = () => {
       telegramClient,
       updateFileStructure,
       captureExplorerScroll,
-      clearSidecarSubtitleBlob,
+      clearSidecarSubtitleState,
     ],
   );
 
@@ -1881,14 +1878,14 @@ const FileExplorer = () => {
         title={streamPlayer.title}
         streamUrl={streamPlayer.url}
         audioOnly={streamPlayer.audioOnly}
-        subtitleTrackUrl={streamPlayer.subtitleTrackUrl}
+        subtitleVttText={streamPlayer.subtitleVttText}
         preparePlayback={preparePlayback}
         onClose={() => {
           urlWriteModeRef.current = 'replace';
           if (streamPlayer.fileId != null) {
             unregisterPlaybackFileId(streamPlayer.fileId);
           }
-          clearSidecarSubtitleBlob();
+          clearSidecarSubtitleState();
           setStreamPlayer({ ...CLOSED_STREAM_PLAYER });
         }}
       />

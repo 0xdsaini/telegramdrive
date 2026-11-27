@@ -6,6 +6,35 @@ function isActiveSubtitleTrackMode(mode) {
   return mode === SUBTITLE_TRACK_DISPLAY_MODE || mode === 'showing';
 }
 
+function findCueAtTime(track, time) {
+  const list = track?.cues;
+  if (!list?.length || !Number.isFinite(time)) return null;
+  for (let i = 0; i < list.length; i += 1) {
+    const cue = list[i];
+    if (time >= cue.startTime && time < cue.endTime) return cue;
+  }
+  return null;
+}
+
+export function subtitleTextToLines(text) {
+  return stripCueMarkup(text)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, MAX_SUBTITLE_LINES);
+}
+
+function cueToLines(cue) {
+  const raw = typeof cue?.text === 'string'
+    ? cue.text
+    : cue?.getCueAsHTML?.()?.textContent || '';
+  return stripCueMarkup(raw)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, MAX_SUBTITLE_LINES);
+}
+
 function stripCueMarkup(text) {
   if (!text) return '';
   return text
@@ -29,22 +58,18 @@ export function getActiveSubtitleCueLines(video) {
   const tracks = video?.textTracks;
   if (!tracks?.length) return [];
 
+  const time = Number.isFinite(video.currentTime) ? video.currentTime : 0;
+
   for (let i = 0; i < tracks.length; i += 1) {
     const track = tracks[i];
     if (track.kind !== 'subtitles' && track.kind !== 'captions') continue;
     if (!isActiveSubtitleTrackMode(track.mode)) continue;
 
     const activeCues = track.activeCues;
-    if (!activeCues?.length) return [];
+    let cue = activeCues?.length ? activeCues[0] : findCueAtTime(track, time);
+    if (!cue) continue;
 
-    const cue = activeCues[0];
-    const raw = typeof cue.text === 'string' ? cue.text : cue.getCueAsHTML?.()?.textContent || '';
-    const lines = stripCueMarkup(raw)
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean);
-
-    return lines.slice(0, MAX_SUBTITLE_LINES);
+    return cueToLines(cue);
   }
 
   return [];
