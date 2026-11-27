@@ -31,6 +31,8 @@
   overflow: hidden;
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
   transition: transform 0.22s ease, opacity 0.22s ease;
+  container-type: size;
+  container-name: yt-player;
 }
 
 .yt-player-stage--settings-open {
@@ -232,76 +234,97 @@
   touch-action: none;
   -webkit-tap-highlight-color: transparent;
   z-index: 1;
-  container-type: size;
-  container-name: yt-player-video;
 }
 
 .yt-player-video::cue {
   opacity: 0;
 }
 
+/* Netflix Cadmium player-timedtext: bottom ~10%, centered, raised when chrome is visible */
 .yt-player-subtitle-overlay {
   position: absolute;
-  left: 50%;
-  z-index: 4;
+  top: auto;
+  right: 0;
+  left: 0;
+  z-index: 5;
   box-sizing: border-box;
-  width: min(90%, 42rem);
-  max-width: 90%;
-  padding: 0 8px;
+  width: 100%;
+  max-width: none;
+  padding: 0 5%;
   pointer-events: none;
   text-align: center;
-  transform: translateX(-50%);
-  bottom: calc(9% + env(safe-area-inset-bottom, 0px));
-  transition: bottom 0.22s ease-out, transform 0.22s ease-out;
+  transform: none;
+  bottom: calc(
+    10% + var(--yt-subtitle-video-lift, 0px) + env(safe-area-inset-bottom, 0px)
+  );
+  transition: bottom 0.22s ease-out;
 }
 
 .yt-player-stage--controls-visible .yt-player-subtitle-overlay {
-  bottom: calc(21% + env(safe-area-inset-bottom, 0px));
+  bottom: calc(
+    18% + var(--yt-subtitle-video-lift, 0px) + env(safe-area-inset-bottom, 0px)
+  );
 }
 
 .yt-player-stage--immersive .yt-player-subtitle-overlay,
 .yt-player-stage--fullscreen .yt-player-subtitle-overlay {
-  bottom: calc(10% + env(safe-area-inset-bottom, 0px));
+  bottom: calc(
+    10% + var(--yt-subtitle-video-lift, 0px) + env(safe-area-inset-bottom, 0px)
+  );
 }
 
 .yt-player-stage--immersive.yt-player-stage--controls-visible .yt-player-subtitle-overlay,
 .yt-player-stage--fullscreen.yt-player-stage--controls-visible .yt-player-subtitle-overlay {
-  bottom: calc(23% + env(safe-area-inset-bottom, 0px));
+  bottom: calc(
+    20% + var(--yt-subtitle-video-lift, 0px) + env(safe-area-inset-bottom, 0px)
+  );
 }
 
 .yt-player-subtitle-line {
-  display: inline-block;
-  margin: 0.14em 0;
-  padding: 0.28em 0.55em;
-  border-radius: 4px;
-  background: rgba(0, 0, 0, 0.72);
+  display: block;
+  margin: 0.1em 0;
+  padding: 0;
   color: #fff;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  font-size: clamp(14px, 4.2cqh, 1.65rem);
+  font-family:
+    'Netflix Sans',
+    'Helvetica Neue',
+    Helvetica,
+    Roboto,
+    Arial,
+    sans-serif;
+  font-size: clamp(1rem, 4.2cqh, 1.875rem);
   font-weight: 500;
-  line-height: 1.32;
-  letter-spacing: 0.01em;
-  text-shadow: none;
-  box-decoration-break: clone;
-  -webkit-box-decoration-break: clone;
+  line-height: 1.25;
+  letter-spacing: normal;
+  white-space: nowrap;
+  text-shadow:
+    2px 2px 3px rgb(0, 0, 0),
+    0 0 6px rgba(0, 0, 0, 0.9),
+    1px 1px 8px rgba(0, 0, 0, 0.8);
 }
 
 @media (hover: none) and (pointer: coarse) {
   .yt-player-subtitle-line {
-    font-size: clamp(15px, 4.6cqh, 1.85rem);
+    font-size: clamp(1.05rem, 4.6cqh, 2rem);
   }
 
   .yt-player-subtitle-overlay {
-    bottom: calc(11% + env(safe-area-inset-bottom, 0px));
+    bottom: calc(
+      10% + var(--yt-subtitle-video-lift, 0px) + env(safe-area-inset-bottom, 0px)
+    );
   }
 
   .yt-player-stage--controls-visible .yt-player-subtitle-overlay {
-    bottom: calc(26% + env(safe-area-inset-bottom, 0px));
+    bottom: calc(
+      22% + var(--yt-subtitle-video-lift, 0px) + env(safe-area-inset-bottom, 0px)
+    );
   }
 
   .yt-player-stage--immersive.yt-player-stage--controls-visible .yt-player-subtitle-overlay,
   .yt-player-stage--fullscreen.yt-player-stage--controls-visible .yt-player-subtitle-overlay {
-    bottom: calc(28% + env(safe-area-inset-bottom, 0px));
+    bottom: calc(
+      24% + var(--yt-subtitle-video-lift, 0px) + env(safe-area-inset-bottom, 0px)
+    );
   }
 }
 

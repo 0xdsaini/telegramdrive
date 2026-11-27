@@ -1581,16 +1581,17 @@ const VideoPlayerModal = ({
           {lastVideoError ? (
             <div className="yt-player-error-banner">{lastVideoError}</div>
           ) : null}
-
-          {!audioOnly ? (
-            <VideoSubtitleOverlay
-              videoRef={videoRef}
-              enabled={selectedSubtitleTrackKey !== SUBTITLE_OFF_KEY}
-              subtitleVttText={subtitleVttText}
-              open={open}
-            />
-          ) : null}
         </div>
+
+        {!audioOnly ? (
+          <VideoSubtitleOverlay
+            videoRef={videoRef}
+            stageRef={stageRef}
+            enabled={selectedSubtitleTrackKey !== SUBTITLE_OFF_KEY}
+            subtitleVttText={subtitleVttText}
+            open={open}
+          />
+        ) : null}
 
         <div className="yt-player-controls" onClick={(e) => e.stopPropagation()}>
           <div
