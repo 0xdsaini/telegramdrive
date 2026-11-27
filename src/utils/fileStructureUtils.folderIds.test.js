@@ -3,10 +3,12 @@ import {
   addFileByFolderId,
   createEmptyFileStructure,
   createFolder,
+  deleteFolder,
   ensureFolderIds,
   findFolderById,
   findFolderByPath,
   mergeFileStructures,
+  moveFolder,
   renameFolder,
 } from './fileStructureUtils';
 
@@ -62,5 +64,36 @@ describe('mergeFileStructures with folder ids', () => {
     expect(folder.name).toBe('Renamed');
     expect(folder.files.some((f) => f.filename === 'a.mkv')).toBe(true);
     expect(findFolderByPath(merged, '/OldName')).toBeNull();
+  });
+
+  it('does not resurrect a folder deleted locally when remote is newer', () => {
+    let remote = createEmptyFileStructure();
+    remote = createFolder(remote, '/', 'TrashMe');
+    const folderId = findFolderByPath(remote, '/TrashMe').id;
+
+    let local = createEmptyFileStructure();
+    local = createFolder(local, '/', 'TrashMe');
+    local = deleteFolder(local, '/TrashMe');
+
+    const merged = mergeFileStructures(remote, local, { nameWinsFrom: 'remote' });
+    expect(findFolderByPath(merged, '/TrashMe')).toBeNull();
+    expect(findFolderById(merged, folderId)).toBeNull();
+  });
+
+  it('does not duplicate a folder after move when remote still has old parent', () => {
+    let remote = createEmptyFileStructure();
+    remote = createFolder(remote, '/', 'Src');
+    remote = createFolder(remote, '/', 'Dst');
+    const movedId = findFolderByPath(remote, '/Src').id;
+
+    let local = JSON.parse(JSON.stringify(remote));
+    local = moveFolder(local, '/Src', '/Dst');
+
+    const merged = mergeFileStructures(remote, local, { nameWinsFrom: 'remote' });
+    expect(findFolderByPath(merged, '/Src')).toBeNull();
+    expect(findFolderByPath(merged, '/Dst/Src')).not.toBeNull();
+    expect(findFolderById(merged, movedId).name).toBe('Src');
+    const idCount = JSON.stringify(merged).match(new RegExp(`"id":${movedId}`, 'g'));
+    expect(idCount?.length).toBe(1);
   });
 });

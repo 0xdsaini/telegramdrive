@@ -750,12 +750,13 @@ const TelegramMessenger = () => {
         skipEditReturnDelay = false,
         uploadSession = null,
         localOnly = false,
+        saveIntent = 'upload',
       } = saveOpts;
 
-      const stampedStructure = stampFileStructureUpdatedAt(
+      let structureToSave = stampFileStructureUpdatedAt(
         ensureFolderIds(updatedStructure),
       );
-      setFileStructure(stampedStructure);
+      setFileStructure(structureToSave);
 
       if (localOnly) {
         return true;
@@ -768,29 +769,37 @@ const TelegramMessenger = () => {
           remote.text,
           remote.editDateUnix
         );
-        const localTs = getMetadataTimestampMs(updatedStructure) ?? 0;
+        const localTs = getMetadataTimestampMs(structureToSave) ?? 0;
         const remoteTs =
           getMetadataTimestampMs(remoteStructure) ??
           (remote.editDateUnix ? remote.editDateUnix * 1000 : 0);
 
         if (remoteTs > localTs) {
-          console.warn(
-            'Remote metadata is newer; merging with local changes before save.',
-            { localTs, remoteTs },
-          );
-          updatedStructure = mergeFileStructures(remoteStructure, updatedStructure, {
-            nameWinsFrom: 'remote',
-          });
-          setFileStructure(
-            stampFileStructureUpdatedAt(ensureFolderIds(updatedStructure)),
-          );
+          if (saveIntent === 'explorer') {
+            console.warn(
+              'Remote metadata is newer; saving explorer change without merge.',
+              { localTs, remoteTs },
+            );
+          } else {
+            console.warn(
+              'Remote metadata is newer; merging with local changes before save.',
+              { localTs, remoteTs },
+            );
+            structureToSave = stampFileStructureUpdatedAt(
+              ensureFolderIds(
+                mergeFileStructures(remoteStructure, structureToSave, {
+                  nameWinsFrom: 'remote',
+                  localMembershipWins: true,
+                }),
+              ),
+            );
+            setFileStructure(structureToSave);
+          }
         }
-      } else if (skipRemoteFetch) {
-        updatedStructure = stampedStructure;
       }
 
       const messageText = serializeFileStructure(
-        stampFileStructureUpdatedAt(ensureFolderIds(updatedStructure)),
+        stampFileStructureUpdatedAt(ensureFolderIds(structureToSave)),
       );
 
       console.log('Updating file structure in chat ID:', selectedChatId);

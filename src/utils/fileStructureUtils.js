@@ -100,9 +100,13 @@ export const stampFileStructureUpdatedAt = (fileStructure, date = new Date()) =>
 /**
  * Deep-merge folder trees. Files: local wins on same filename. Subfolders match by stable `id`
  * when present; display `name` follows `nameWinsFrom` when both sides exist.
+ *
+ * When `localMembershipWins` is true (default), child folders under a node are taken from `local`
+ * only (moves/deletes are preserved; remote-only siblings are not resurrected).
+ *
  * @param {Object} remote
  * @param {Object} local
- * @param {{ nameWinsFrom?: 'local' | 'remote' }} [options]
+ * @param {{ nameWinsFrom?: 'local' | 'remote', localMembershipWins?: boolean }} [options]
  * @returns {Object}
  */
 export const mergeFileStructures = (remote, local, options = {}) => {
@@ -110,6 +114,7 @@ export const mergeFileStructures = (remote, local, options = {}) => {
   if (!local) return remote;
 
   const nameWinsFrom = options.nameWinsFrom === 'remote' ? 'remote' : 'local';
+  const localMembershipWins = options.localMembershipWins !== false;
 
   const pickFolderName = (remoteFolder, localFolder) => {
     if (!remoteFolder) return localFolder?.name;
@@ -121,6 +126,16 @@ export const mergeFileStructures = (remote, local, options = {}) => {
     numericFolderId(localFolder?.id)
       ?? numericFolderId(remoteFolder?.id)
       ?? undefined
+  );
+
+  const findRemoteChildById = (remoteFolder, id) => (
+    (remoteFolder.subfolders || []).find((s) => numericFolderId(s?.id) === id) ?? null
+  );
+
+  const findRemoteLegacyChildByName = (remoteFolder, name) => (
+    (remoteFolder.subfolders || []).find(
+      (s) => s?.name === name && numericFolderId(s?.id) == null,
+    ) ?? null
   );
 
   const mergeFolder = (remoteFolder, localFolder) => {
@@ -135,40 +150,54 @@ export const mergeFileStructures = (remote, local, options = {}) => {
       if (file?.filename) fileMap.set(file.filename, { ...file });
     }
 
-    const byId = new Map();
-    const legacyByName = new Map();
-
-    for (const sub of remoteFolder.subfolders || []) {
-      const id = numericFolderId(sub?.id);
-      if (id != null) {
-        const slot = byId.get(id) || { remote: null, local: null };
-        slot.remote = sub;
-        byId.set(id, slot);
-      } else if (sub?.name) {
-        const slot = legacyByName.get(sub.name) || { remote: null, local: null };
-        slot.remote = sub;
-        legacyByName.set(sub.name, slot);
-      }
-    }
-    for (const sub of localFolder.subfolders || []) {
-      const id = numericFolderId(sub?.id);
-      if (id != null) {
-        const slot = byId.get(id) || { remote: null, local: null };
-        slot.local = sub;
-        byId.set(id, slot);
-      } else if (sub?.name) {
-        const slot = legacyByName.get(sub.name) || { remote: null, local: null };
-        slot.local = sub;
-        legacyByName.set(sub.name, slot);
-      }
-    }
-
     const mergedSubfolders = [];
-    for (const [, slot] of byId) {
-      mergedSubfolders.push(mergeFolder(slot.remote, slot.local));
-    }
-    for (const [, slot] of legacyByName) {
-      mergedSubfolders.push(mergeFolder(slot.remote, slot.local));
+
+    if (localMembershipWins) {
+      for (const sub of localFolder.subfolders || []) {
+        const id = numericFolderId(sub?.id);
+        if (id != null) {
+          mergedSubfolders.push(mergeFolder(findRemoteChildById(remoteFolder, id), sub));
+        } else if (sub?.name) {
+          mergedSubfolders.push(
+            mergeFolder(findRemoteLegacyChildByName(remoteFolder, sub.name), sub),
+          );
+        }
+      }
+    } else {
+      const byId = new Map();
+      const legacyByName = new Map();
+
+      for (const sub of remoteFolder.subfolders || []) {
+        const id = numericFolderId(sub?.id);
+        if (id != null) {
+          const slot = byId.get(id) || { remote: null, local: null };
+          slot.remote = sub;
+          byId.set(id, slot);
+        } else if (sub?.name) {
+          const slot = legacyByName.get(sub.name) || { remote: null, local: null };
+          slot.remote = sub;
+          legacyByName.set(sub.name, slot);
+        }
+      }
+      for (const sub of localFolder.subfolders || []) {
+        const id = numericFolderId(sub?.id);
+        if (id != null) {
+          const slot = byId.get(id) || { remote: null, local: null };
+          slot.local = sub;
+          byId.set(id, slot);
+        } else if (sub?.name) {
+          const slot = legacyByName.get(sub.name) || { remote: null, local: null };
+          slot.local = sub;
+          legacyByName.set(sub.name, slot);
+        }
+      }
+
+      for (const [, slot] of byId) {
+        mergedSubfolders.push(mergeFolder(slot.remote, slot.local));
+      }
+      for (const [, slot] of legacyByName) {
+        mergedSubfolders.push(mergeFolder(slot.remote, slot.local));
+      }
     }
 
     return {

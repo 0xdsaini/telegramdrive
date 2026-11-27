@@ -210,7 +210,9 @@ export function useUntrackedFiles({ currentPath, onSuccess, onError }) {
         }
       }
 
-      const success = await window.updateTelegramFileStructure(updatedStructure);
+      const success = await window.updateTelegramFileStructure(updatedStructure, {
+        saveIntent: 'upload',
+      });
 
       if (success) {
         onSuccess(`Added ${selectedFiles.length} file(s) to tracking`);

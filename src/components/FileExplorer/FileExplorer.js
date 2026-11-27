@@ -70,6 +70,9 @@ import {
   resolveExplorerLocation,
 } from '../../utils/explorerUrl';
 
+/** User move/delete/rename/create — local tree wins on conflict (no union merge). */
+const EXPLORER_METADATA_SAVE = { saveIntent: 'explorer' };
+
 // (function() {
 //   const originalLog = console.log;
 //   let logData = [];
@@ -381,7 +384,10 @@ const FileExplorer = () => {
       const updatedStructure = createFolder(fileStructure, currentPath, folderName);
       
       // Update the file structure in Telegram
-      const success = await window.updateTelegramFileStructure(updatedStructure);
+      const success = await window.updateTelegramFileStructure(
+        updatedStructure,
+        EXPLORER_METADATA_SAVE,
+      );
       
       if (success) {
         setSuccess(`Folder "${folderName}" created successfully`);
@@ -471,7 +477,10 @@ const FileExplorer = () => {
         return;
       }
 
-      const success = await window.updateTelegramFileStructure(updatedStructure);
+      const success = await window.updateTelegramFileStructure(
+        updatedStructure,
+        EXPLORER_METADATA_SAVE,
+      );
       if (!success) {
         setError('Failed to rename folder');
         return;
@@ -560,7 +569,10 @@ const FileExplorer = () => {
       const updatedStructure = deleteFolder(fileStructure, folderPath);
       
       // Update the file structure in Telegram
-      const success = await window.updateTelegramFileStructure(updatedStructure);
+      const success = await window.updateTelegramFileStructure(
+        updatedStructure,
+        EXPLORER_METADATA_SAVE,
+      );
       
       if (success) {
         setSuccess(`Folder "${folderName}" and all its contents deleted successfully`);
@@ -798,7 +810,10 @@ const FileExplorer = () => {
         const updatedStructure = moveFolder(fileStructure, sourcePath, destPath);
         
         // Update the file structure in Telegram
-        const success = await window.updateTelegramFileStructure(updatedStructure);
+        const success = await window.updateTelegramFileStructure(
+          updatedStructure,
+          EXPLORER_METADATA_SAVE,
+        );
         
         if (success) {
           setSuccess(`Folder moved successfully to ${destPath}`);
@@ -853,7 +868,10 @@ const FileExplorer = () => {
         const updatedStructure = moveFile(fileStructure, sourceParentPath, fileName, destPath);
         
         // Update the file structure in Telegram
-        const success = await window.updateTelegramFileStructure(updatedStructure);
+        const success = await window.updateTelegramFileStructure(
+          updatedStructure,
+          EXPLORER_METADATA_SAVE,
+        );
         
         if (success) {
           setSuccess(`File "${fileName}" moved successfully to ${destPath}`);
@@ -960,7 +978,10 @@ const FileExplorer = () => {
         chatId: selectedChatId,
         items: batchItems,
         saveMetadata: (structure, opts) =>
-          window.updateTelegramFileStructure(structure, opts),
+          window.updateTelegramFileStructure(structure, {
+            ...opts,
+            saveIntent: 'upload',
+          }),
         getStructure: () => workingStructure,
         onUploadSuccess: (_structure, item, messageId) => {
           const { targetFolderId } = item.meta || {};
@@ -1072,7 +1093,10 @@ const FileExplorer = () => {
         chatId: selectedChatId,
         items: batchItems,
         saveMetadata: (structure, opts) =>
-          window.updateTelegramFileStructure(structure, opts),
+          window.updateTelegramFileStructure(structure, {
+            ...opts,
+            saveIntent: 'upload',
+          }),
         getStructure: () => workingStructure,
         onUploadSuccess: (_structure, item, messageId) => {
           workingStructure = addFile(workingStructure, currentPath, item.key, messageId);
@@ -1165,7 +1189,9 @@ const FileExplorer = () => {
 
       workingStructure = addFile(workingStructure, currentPath, fileName, messageId);
       await window.updateTelegramFileStructure(workingStructure, { localOnly: true });
-      await window.updateTelegramFileStructure(workingStructure);
+      await window.updateTelegramFileStructure(workingStructure, {
+        saveIntent: 'upload',
+      });
       setSuccess(
         rewritten
           ? `Uploaded from URL: ${fileName} (${rewriteNote || 'via mirror'})`
@@ -1265,7 +1291,10 @@ const FileExplorer = () => {
       const updatedStructure = deleteFile(fileStructure, currentPath, fileName);
       
       // Update the file structure in Telegram
-      const success = await window.updateTelegramFileStructure(updatedStructure);
+      const success = await window.updateTelegramFileStructure(
+        updatedStructure,
+        EXPLORER_METADATA_SAVE,
+      );
       
       if (success) {
         setSuccess(`File "${fileName}" deleted successfully`);
