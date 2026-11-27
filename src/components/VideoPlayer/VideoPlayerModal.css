@@ -399,20 +399,13 @@
   }
 }
 
+/* Corner status chip: keeps the frame clear during long 2× holds */
 .yt-player-speed-boost {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 6;
-}
-
-/* Corner status chip: keeps center frame clear during long 2× holds */
-.yt-player-speed-boost__badge {
   position: absolute;
   top: max(10px, env(safe-area-inset-top, 0px));
   right: max(10px, env(safe-area-inset-right, 0px));
-  left: auto;
-  transform: none;
+  z-index: 6;
+  pointer-events: none;
   padding: 5px 10px;
   border-radius: 8px;
   background: rgba(0, 0, 0, 0.62);
@@ -424,37 +417,6 @@
   box-shadow: 0 1px 8px rgba(0, 0, 0, 0.4);
   -webkit-backdrop-filter: blur(6px);
   backdrop-filter: blur(6px);
-}
-
-.yt-player-speed-boost__chevrons {
-  position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  display: flex;
-  gap: 6px;
-  opacity: 0.85;
-}
-
-.yt-player-speed-boost__chevrons--left {
-  left: 8%;
-}
-
-.yt-player-speed-boost__chevrons--right {
-  right: 8%;
-}
-
-.yt-player-speed-boost__chevrons span {
-  display: block;
-  width: 0;
-  height: 0;
-  border-style: solid;
-  border-width: 10px 0 10px 16px;
-  border-color: transparent transparent transparent rgba(255, 255, 255, 0.55);
-  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.5));
-}
-
-.yt-player-speed-boost__chevrons--left span {
-  transform: scaleX(-1);
 }
 
 .yt-player-seek-ripple {

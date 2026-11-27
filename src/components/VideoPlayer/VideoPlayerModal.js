@@ -1261,14 +1261,12 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
           ) : null}
 
           {speedBoostVisible ? (
-            <div className="yt-player-speed-boost" aria-live="polite" aria-label="Playing at 2x speed">
-              <span className="yt-player-speed-boost__badge">2x</span>
-              <span className="yt-player-speed-boost__chevrons yt-player-speed-boost__chevrons--left" aria-hidden>
-                <span /><span /><span />
-              </span>
-              <span className="yt-player-speed-boost__chevrons yt-player-speed-boost__chevrons--right" aria-hidden>
-                <span /><span /><span />
-              </span>
+            <div
+              className="yt-player-speed-boost"
+              aria-live="polite"
+              aria-label="Playing at 2x speed"
+            >
+              2x
             </div>
           ) : null}
 
