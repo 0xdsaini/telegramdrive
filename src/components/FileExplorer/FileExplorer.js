@@ -36,7 +36,10 @@ import {
   sendDocumentFromUrlMtproto,
 } from '../../mtproto/sendDocumentFromUrlMtproto';
 import { streamDebug, streamDebugError } from '../../utils/streamDebug';
-import { lockLandscapeForPlayback } from '../../utils/playbackOrientation';
+import {
+  lockLandscapeForPlayback,
+  lockPortraitForPlayback,
+} from '../../utils/playbackOrientation';
 import {
   prepareForStreaming,
   registerPlaybackFileId,
@@ -1311,6 +1314,11 @@ const FileExplorer = () => {
     async (fileName, e) => {
       e?.stopPropagation?.();
       captureExplorerScroll();
+      if (isAudioFileName(fileName)) {
+        void lockPortraitForPlayback();
+      } else {
+        void lockLandscapeForPlayback();
+      }
       streamDebug('play', 'handleStreamPlay click', {
         fileName,
         swController: !!navigator.serviceWorker?.controller,
@@ -1378,9 +1386,6 @@ const FileExplorer = () => {
         }
 
         const audioOnly = isAudioPlayback(fileName, resolved.message);
-        if (!audioOnly) {
-          void lockLandscapeForPlayback();
-        }
 
         const streamUrl = getStreamUrl({
           fileId: resolved.fileId,

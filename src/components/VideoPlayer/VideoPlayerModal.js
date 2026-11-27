@@ -16,6 +16,7 @@ import { streamDebug, streamDebugError } from '../../utils/streamDebug';
 import {
   isPortraitViewport,
   lockLandscapeForPlayback,
+  lockPortraitForPlayback,
   unlockPlaybackOrientation,
 } from '../../utils/playbackOrientation';
 import './VideoPlayerModal.css';
@@ -261,7 +262,9 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
       setImmersiveMode(true);
     }
 
-    if (!audioOnly) {
+    if (audioOnly) {
+      await lockPortraitForPlayback();
+    } else {
       await lockLandscapeForPlayback();
     }
   }, [audioOnly]);
@@ -496,7 +499,9 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
     if (req) {
       try {
         await req();
-        if (!audioOnly) {
+        if (audioOnly) {
+          await lockPortraitForPlayback();
+        } else {
           await lockLandscapeForPlayback();
         }
         bumpControlsVisible();
@@ -507,7 +512,9 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
     }
 
     setImmersiveMode(true);
-    if (!audioOnly) {
+    if (audioOnly) {
+      await lockPortraitForPlayback();
+    } else {
       await lockLandscapeForPlayback();
     }
     bumpControlsVisible();
