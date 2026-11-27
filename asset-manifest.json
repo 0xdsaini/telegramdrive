@@ -1,16 +1,16 @@
 {
   "files": {
     "main.css": "/telegramdrive/static/css/main.f19e3f0d.css",
-    "main.js": "/telegramdrive/static/js/main.1b4c9f5c.js",
+    "main.js": "/telegramdrive/static/js/main.fb2f2b4a.js",
     "static/js/453.b5a909b4.chunk.js": "/telegramdrive/static/js/453.b5a909b4.chunk.js",
     "index.html": "/telegramdrive/index.html",
     "static/media/GramSafeLogo.svg": "/telegramdrive/static/media/GramSafeLogo.ef515d79252a087ef623e9be95e97325.svg",
     "main.f19e3f0d.css.map": "/telegramdrive/static/css/main.f19e3f0d.css.map",
-    "main.1b4c9f5c.js.map": "/telegramdrive/static/js/main.1b4c9f5c.js.map",
+    "main.fb2f2b4a.js.map": "/telegramdrive/static/js/main.fb2f2b4a.js.map",
     "453.b5a909b4.chunk.js.map": "/telegramdrive/static/js/453.b5a909b4.chunk.js.map"
   },
   "entrypoints": [
     "static/css/main.f19e3f0d.css",
-    "static/js/main.1b4c9f5c.js"
+    "static/js/main.fb2f2b4a.js"
   ]
 }
