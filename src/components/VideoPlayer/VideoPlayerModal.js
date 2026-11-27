@@ -105,6 +105,7 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
   const centerFlashTimerRef = useRef(null);
   const seekStackRef = useRef({ side: null, burst: 0, steps: 0 });
   const transportLockRef = useRef(0);
+  const preferredPlaybackRateRef = useRef(1);
   const speedBoostRef = useRef({
     timer: null,
     active: false,
@@ -330,6 +331,11 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
     }
   }, []);
 
+  const restorePlaybackRateUi = useCallback((rate) => {
+    preferredPlaybackRateRef.current = rate;
+    setPlaybackRate(rate);
+  }, []);
+
   const resetSpeedBoost = useCallback(() => {
     cancelSpeedBoostHoldTimer();
     const boost = speedBoostRef.current;
@@ -337,38 +343,38 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
       const video = videoRef.current;
       if (video) {
         video.playbackRate = boost.savedRate;
-        setPlaybackRate(boost.savedRate);
+        restorePlaybackRateUi(boost.savedRate);
       }
     }
     boost.active = false;
     boost.touchId = null;
     setSpeedBoostVisible(false);
-  }, [cancelSpeedBoostHoldTimer]);
+  }, [cancelSpeedBoostHoldTimer, restorePlaybackRateUi]);
 
   const endSpeedBoostGesture = useCallback(() => {
     const wasActive = speedBoostRef.current.active;
     if (wasActive) {
       const video = videoRef.current;
+      const rate = speedBoostRef.current.savedRate;
       if (video) {
-        video.playbackRate = speedBoostRef.current.savedRate;
-        setPlaybackRate(speedBoostRef.current.savedRate);
+        video.playbackRate = rate;
       }
+      restorePlaybackRateUi(rate);
     }
     cancelSpeedBoostHoldTimer();
     speedBoostRef.current.active = false;
     speedBoostRef.current.touchId = null;
     setSpeedBoostVisible(false);
     return wasActive;
-  }, [cancelSpeedBoostHoldTimer]);
+  }, [cancelSpeedBoostHoldTimer, restorePlaybackRateUi]);
 
   const activateSpeedBoost = useCallback(() => {
     const video = videoRef.current;
     if (!video || video.paused || video.ended) return;
     const boost = speedBoostRef.current;
-    boost.savedRate = video.playbackRate;
+    boost.savedRate = preferredPlaybackRateRef.current;
     boost.active = true;
     video.playbackRate = HOLD_2X_RATE;
-    setPlaybackRate(HOLD_2X_RATE);
     setSpeedBoostVisible(true);
     setShowControls(false);
     setShowSettings(false);
@@ -387,7 +393,7 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
       boost.startY = touch.clientY;
       boost.touchId = touch.identifier;
       boost.active = false;
-      boost.savedRate = video.playbackRate;
+      boost.savedRate = preferredPlaybackRateRef.current;
 
       const touchId = touch.identifier;
       boost.timer = window.setTimeout(() => {
@@ -529,8 +535,9 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
           if (speedBoostRef.current.active) {
             const video = videoRef.current;
             if (video) {
-              video.playbackRate = speedBoostRef.current.savedRate;
-              setPlaybackRate(speedBoostRef.current.savedRate);
+              const rate = speedBoostRef.current.savedRate;
+              video.playbackRate = rate;
+              restorePlaybackRateUi(rate);
             }
             speedBoostRef.current.active = false;
             speedBoostRef.current.touchId = null;
@@ -544,7 +551,7 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
       e.preventDefault();
       applySwipeDismissOffset(dy);
     },
-    [applySwipeDismissOffset, cancelSpeedBoostHoldTimer, clearTapGesture]
+    [applySwipeDismissOffset, cancelSpeedBoostHoldTimer, clearTapGesture, restorePlaybackRateUi]
   );
 
   const handleStageSwipeTouchEndCapture = useCallback(
@@ -706,6 +713,7 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
     (rate) => {
       const video = videoRef.current;
       if (!video) return;
+      preferredPlaybackRateRef.current = rate;
       video.playbackRate = rate;
       setPlaybackRate(rate);
       setShowSettings(false);
@@ -919,7 +927,15 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
       setIsPlaying(!video.paused && !video.ended);
       setIsMuted(video.muted);
       setVolume(video.volume);
-      setPlaybackRate(video.playbackRate);
+      const boost = speedBoostRef.current;
+      if (boost.active) {
+        setPlaybackRate(boost.savedRate);
+      } else if (video.playbackRate === HOLD_2X_RATE) {
+        setPlaybackRate(preferredPlaybackRateRef.current);
+      } else {
+        preferredPlaybackRateRef.current = video.playbackRate;
+        setPlaybackRate(video.playbackRate);
+      }
     };
 
     const logVideoState = (eventName) => {
