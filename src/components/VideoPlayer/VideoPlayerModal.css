@@ -33,6 +33,10 @@
   transition: transform 0.22s ease, opacity 0.22s ease;
 }
 
+.yt-player-stage--settings-open {
+  overflow: visible;
+}
+
 .yt-player-stage--fullscreen,
 .yt-player-stage:fullscreen,
 .yt-player-stage:-webkit-full-screen {
@@ -705,6 +709,7 @@
 
 .yt-player-settings-wrap {
   position: relative;
+  overflow: visible;
 }
 
 .yt-player-settings-menu {
@@ -717,6 +722,9 @@
   min-width: 120px;
   max-height: min(70vh, 420px);
   overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
   background: rgba(28, 28, 28, 0.98);
   border-radius: 8px;
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
@@ -860,17 +868,39 @@
   }
 
   .yt-player-settings-menu--top {
-    min-width: 9.5rem;
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 52px);
+    right: max(10px, env(safe-area-inset-right, 0px));
+    left: auto;
+    bottom: auto;
+    min-width: 10.5rem;
+    max-width: min(16rem, calc(100vw - 24px));
+    max-height: calc(
+      100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 5.5rem
+    );
     padding: 8px 0;
     background: rgba(22, 22, 22, 0.98);
     border: 1px solid rgba(255, 255, 255, 0.18);
     box-shadow: 0 8px 28px rgba(0, 0, 0, 0.65);
+    z-index: 11020;
+  }
+
+  .yt-player-settings-menu--top.yt-player-settings-menu--with-audio {
+    min-width: 11.5rem;
   }
 
   .yt-player-settings-menu--top button {
     padding: 12px 18px;
     font-size: 0.95rem;
     color: #f3f3f3;
+  }
+
+  .yt-player-settings-menu--top .yt-player-settings-menu-heading {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: rgba(22, 22, 22, 0.98);
+    padding-top: 6px;
   }
 
   .yt-player-close--desktop {

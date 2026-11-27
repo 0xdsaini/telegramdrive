@@ -1201,6 +1201,11 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
     <ul
       className={`yt-player-settings-menu${positionClass}${settingsMenuExtraClass}`}
       role="menu"
+      onClick={(e) => e.stopPropagation()}
+      onTouchStart={(e) => {
+        e.stopPropagation();
+        bumpControlsVisible();
+      }}
     >
       <li className="yt-player-settings-menu-heading" role="presentation">
         Speed
@@ -1257,7 +1262,9 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
           immersiveMode ? ' yt-player-stage--immersive' : ''
         }${audioOnly ? ' yt-player-stage--audio' : ''}${
           showControls ? ' yt-player-stage--controls-visible' : ''
-        }${swipeDismissDragging ? ' yt-player-stage--swipe-dismiss' : ''}`}
+        }${showSettings ? ' yt-player-stage--settings-open' : ''}${
+          swipeDismissDragging ? ' yt-player-stage--swipe-dismiss' : ''
+        }`}
         onClick={(e) => e.stopPropagation()}
         onMouseMove={bumpControlsVisible}
         onTouchStart={bumpControlsVisible}
