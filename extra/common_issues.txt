@@ -1,0 +1,21 @@
+1. AUTH KEY DUPLICATED
+run this command in console:
+
+----
+
+(async () => {
+  const c = window.tdClient;
+  try {
+    if (c?._gram) await c._gram.disconnect();
+    else if (c?.send) await c.send({ '@type': 'logOut' });
+  } catch (_) {}
+  [
+    'gramjs_string_session',
+    'telegram-selected-chat',
+    'telegram-selected-chat-name',
+  ].forEach((k) => localStorage.removeItem(k));
+  location.reload();
+})();
+
+-----
+
