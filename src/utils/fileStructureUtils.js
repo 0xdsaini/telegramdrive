@@ -462,6 +462,47 @@ export const renameFolder = (fileStructure, path, newFolderName) => {
 };
 
 /**
+ * Renames a file in place (metadata display name only; message_id / inode unchanged).
+ * @param {Object} fileStructure
+ * @param {string} folderPath
+ * @param {string} oldFilename
+ * @param {string} newFilename
+ * @returns {Object}
+ */
+export const renameFile = (fileStructure, folderPath, oldFilename, newFilename) => {
+  const trimmed =
+    typeof newFilename === 'string' ? newFilename.trim() : '';
+  if (!trimmed || trimmed.includes('/')) {
+    console.error('Invalid file name for rename');
+    return fileStructure;
+  }
+
+  const folder = findFolderByPath(fileStructure, folderPath);
+  if (!folder) {
+    console.error(`Folder not found: ${folderPath}`);
+    return fileStructure;
+  }
+
+  const file = folder.files.find((f) => f.filename === oldFilename);
+  if (!file) {
+    console.error(`File not found: ${oldFilename}`);
+    return fileStructure;
+  }
+
+  if (trimmed === oldFilename) {
+    return fileStructure;
+  }
+
+  if (folder.files.some((f) => f.filename === trimmed)) {
+    console.error(`File already exists: ${trimmed}`);
+    return fileStructure;
+  }
+
+  file.filename = trimmed;
+  return fileStructure;
+};
+
+/**
  * Moves a folder to a new location
  * @param {Object} fileStructure - The file structure object
  * @param {string} sourcePath - Path to the folder to move

@@ -59,6 +59,7 @@ import {
   addFileByFolderId,
   deleteFile,
   moveFile,
+  renameFile,
 } from '../../utils/fileStructureUtils';
 import { TelegramContext } from '../../context/TelegramContext';
 import UntrackedFilesPanel, { useUntrackedFiles } from './UntrackedFilesPanel';
@@ -503,6 +504,84 @@ const FileExplorer = () => {
     } catch (error) {
       console.error('Failed to rename folder:', error);
       setError(`Failed to rename folder: ${error.message}`);
+    }
+  };
+
+  const handleRenameFile = async (fileName, e) => {
+    e?.stopPropagation?.();
+
+    const newNameRaw = window.prompt('Enter new file name:', fileName);
+    if (newNameRaw == null) {
+      return;
+    }
+
+    const newName = newNameRaw.trim();
+    if (!newName || newName.includes('/')) {
+      setError('Invalid file name. Name cannot be empty or contain "/"');
+      return;
+    }
+
+    if (newName === fileName) {
+      return;
+    }
+
+    try {
+      setError(null);
+      setSuccess(null);
+
+      if (!isConnected || !telegramClient) {
+        setError('Not connected to Telegram. Please authenticate first.');
+        return;
+      }
+
+      if (!selectedChatId) {
+        setError('No chat group selected. Please select a chat group first.');
+        return;
+      }
+
+      const folder = findFolderByPath(fileStructure, currentPath);
+      if (!folder) {
+        setError(`Folder not found: ${currentPath}`);
+        return;
+      }
+
+      if (folder.files.some((f) => f.filename === newName)) {
+        setError(`A file named "${newName}" already exists here`);
+        return;
+      }
+
+      const before = JSON.stringify(fileStructure);
+      const updatedStructure = renameFile(fileStructure, currentPath, fileName, newName);
+      if (JSON.stringify(updatedStructure) === before) {
+        setError('Failed to rename file');
+        return;
+      }
+
+      const success = await window.updateTelegramFileStructure(
+        updatedStructure,
+        EXPLORER_METADATA_SAVE,
+      );
+      if (!success) {
+        setError('Failed to rename file');
+        return;
+      }
+
+      const urlResolved = resolveExplorerLocation(fileStructure, parseExplorerUrlFromLocation());
+      if (urlResolved.fileName === fileName) {
+        urlWriteModeRef.current = 'replace';
+        replaceExplorerBrowserUrl(currentPath, newName);
+      }
+      if (pendingPlayFileRef.current === fileName) {
+        pendingPlayFileRef.current = newName;
+      }
+      if (streamPlayer.open && streamPlayer.title === fileName) {
+        setStreamPlayer((prev) => ({ ...prev, title: newName }));
+      }
+
+      setSuccess(`File renamed to "${newName}"`);
+    } catch (error) {
+      console.error('Failed to rename file:', error);
+      setError(`Failed to rename file: ${error.message}`);
     }
   };
 
@@ -1733,6 +1812,7 @@ const FileExplorer = () => {
                         : undefined
                     }
                     onDownload={handleDownloadFile}
+                    onRename={handleRenameFile}
                     onDelete={handleDeleteFile}
                     icon={getFileIcon(file.filename)}
                     poster={

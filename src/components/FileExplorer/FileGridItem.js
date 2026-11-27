@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { FaDownload, FaTrash, FaEllipsisV, FaPlay } from 'react-icons/fa';
+import { FaDownload, FaTrash, FaEllipsisV, FaPlay, FaEdit } from 'react-icons/fa';
 
 function shouldLetBrowserNavigate(e) {
   return e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button === 1;
@@ -16,6 +16,7 @@ const FileGridItem = ({
   onSelect,
   onPlay,
   onDownload,
+  onRename,
   onDelete,
   poster,
   icon,
@@ -127,6 +128,20 @@ const FileGridItem = ({
                 Play
               </button>
             ) : null}
+            <button
+              type="button"
+              role="menuitem"
+              className="file-card-menu-item"
+              onClick={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                setMenuOpen(false);
+                onRename(filename, e);
+              }}
+            >
+              <FaEdit aria-hidden />
+              Rename
+            </button>
             <button
               type="button"
               role="menuitem"
