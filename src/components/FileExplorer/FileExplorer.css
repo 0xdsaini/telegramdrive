@@ -222,6 +222,11 @@
   background: rgba(0, 0, 0, 0.62);
 }
 
+.file-card-context-menu {
+  position: fixed;
+  z-index: 10000;
+}
+
 .file-card-menu-panel {
   position: absolute;
   top: calc(100% + 4px);

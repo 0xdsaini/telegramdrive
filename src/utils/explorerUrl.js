@@ -180,6 +180,17 @@ export function pushExplorerBrowserUrl(folderPath, fileName = null) {
   window.history.pushState({ tgExplorer: true }, '', `${nextPath}${search}${hash}`);
 }
 
+/** Opens the explorer at a folder + file so the new tab auto-starts playback. */
+export function openExplorerFileInNewTab(folderPath, fileName) {
+  if (typeof window === 'undefined' || !fileName) {
+    return false;
+  }
+  const path = buildExplorerBrowserPathname(folderPath, fileName);
+  const href = new URL(path, window.location.origin).href;
+  const opened = window.open(href, '_blank', 'noopener,noreferrer');
+  return Boolean(opened);
+}
+
 export function restoreGhPagesSpaPath() {
   if (typeof window === 'undefined') {
     return false;

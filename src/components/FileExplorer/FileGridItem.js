@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { FaDownload, FaTrash, FaEllipsisV, FaPlay } from 'react-icons/fa';
+import { FaDownload, FaTrash, FaEllipsisV, FaPlay, FaExternalLinkAlt } from 'react-icons/fa';
 
 const FileGridItem = ({
   filename,
@@ -12,10 +12,12 @@ const FileGridItem = ({
   onPlay,
   onDownload,
   onDelete,
+  onOpenInNewTab,
   poster,
   icon,
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [contextMenu, setContextMenu] = useState(null);
   const menuRef = useRef(null);
   const draggedRef = useRef(false);
 
@@ -31,6 +33,22 @@ const FileGridItem = ({
     document.addEventListener('mousedown', close);
     return () => document.removeEventListener('mousedown', close);
   }, [menuOpen]);
+
+  useEffect(() => {
+    if (!contextMenu) return undefined;
+    const close = () => setContextMenu(null);
+    const onKey = (e) => {
+      if (e.key === 'Escape') close();
+    };
+    document.addEventListener('mousedown', close);
+    document.addEventListener('scroll', close, true);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', close);
+      document.removeEventListener('scroll', close, true);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [contextMenu]);
 
   const handlePlay = (e) => {
     if (draggedRef.current) {
@@ -56,12 +74,28 @@ const FileGridItem = ({
     }
   };
 
+  const handleOpenInNewTab = (e) => {
+    e?.stopPropagation?.();
+    setMenuOpen(false);
+    setContextMenu(null);
+    onOpenInNewTab?.(filename, e);
+  };
+
+  const handleContextMenu = (e) => {
+    if (!isStreamable || !onOpenInNewTab) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setMenuOpen(false);
+    setContextMenu({ x: e.clientX, y: e.clientY });
+  };
+
   return (
     <div
       ref={itemRef}
       className={classNames}
       aria-selected={keyboardSelected || undefined}
       aria-label={isStreamable ? `Play ${filename}` : filename}
+      onContextMenu={handleContextMenu}
       draggable
       onDragStart={(e) => {
         draggedRef.current = true;
@@ -90,19 +124,30 @@ const FileGridItem = ({
         {menuOpen && (
           <div className="file-card-menu-panel" role="menu">
             {isStreamable ? (
-              <button
-                type="button"
-                role="menuitem"
-                className="file-card-menu-item"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setMenuOpen(false);
-                  handlePlay(e);
-                }}
-              >
-                <FaPlay aria-hidden />
-                Play
-              </button>
+              <>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="file-card-menu-item"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setMenuOpen(false);
+                    handlePlay(e);
+                  }}
+                >
+                  <FaPlay aria-hidden />
+                  Play
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="file-card-menu-item"
+                  onClick={handleOpenInNewTab}
+                >
+                  <FaExternalLinkAlt aria-hidden />
+                  Open in new tab
+                </button>
+              </>
             ) : null}
             <button
               type="button"
@@ -157,6 +202,20 @@ const FileGridItem = ({
       <span className="file-name" title={filename}>
         {filename}
       </span>
+
+      {contextMenu ? (
+        <div
+          className="file-card-menu-panel file-card-context-menu"
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+          role="menu"
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <button type="button" role="menuitem" className="file-card-menu-item" onClick={handleOpenInNewTab}>
+            <FaExternalLinkAlt aria-hidden />
+            Open in new tab
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 };

@@ -9,9 +9,10 @@ import {
   FaCompress,
   FaCog,
   FaMusic,
+  FaExternalLinkAlt,
 } from 'react-icons/fa';
 import { toggleStreamInUse } from '../../utils/streamBridge';
-import { isStreamUrl } from '../../utils/streamUrl';
+import { isStreamUrl, openStreamUrlInNewTab } from '../../utils/streamUrl';
 import { streamDebug, streamDebugError } from '../../utils/streamDebug';
 import {
   isPortraitViewport,
@@ -140,6 +141,27 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
   const [swipeDismissY, setSwipeDismissY] = useState(0);
   const [swipeDismissDragging, setSwipeDismissDragging] = useState(false);
   const [speedBoostVisible, setSpeedBoostVisible] = useState(false);
+  const [videoContextMenu, setVideoContextMenu] = useState(null);
+
+  useEffect(() => {
+    if (!videoContextMenu) return undefined;
+    const close = () => setVideoContextMenu(null);
+    const onKey = (e) => {
+      if (e.key === 'Escape') close();
+    };
+    document.addEventListener('mousedown', close);
+    document.addEventListener('scroll', close, true);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', close);
+      document.removeEventListener('scroll', close, true);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [videoContextMenu]);
+
+  useEffect(() => {
+    if (!open) setVideoContextMenu(null);
+  }, [open]);
 
   const bumpControlsVisible = useCallback(() => {
     setShowControls(true);
@@ -421,9 +443,23 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
     return 'center';
   }, []);
 
-  const preventVideoContextMenu = useCallback((e) => {
-    e.preventDefault();
-  }, []);
+  const handleVideoContextMenu = useCallback(
+    (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!streamUrl || !isStreamUrl(streamUrl)) {
+        return;
+      }
+      setShowSettings(false);
+      setVideoContextMenu({ x: e.clientX, y: e.clientY });
+    },
+    [streamUrl],
+  );
+
+  const handleOpenInNewTab = useCallback(() => {
+    setVideoContextMenu(null);
+    openStreamUrlInNewTab(streamUrl);
+  }, [streamUrl]);
 
   const handleVideoTouchStart = useCallback(
     (e) => {
@@ -1197,7 +1233,7 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
 
         <div
           className={`yt-player-video-wrap${audioOnly ? ' yt-player-video-wrap--audio' : ''}`}
-          onContextMenu={preventVideoContextMenu}
+          onContextMenu={handleVideoContextMenu}
           role="presentation"
         >
           {audioOnly ? (
@@ -1215,7 +1251,7 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
               playsInline
               disablePictureInPicture
               controlsList="nodownload noremoteplayback"
-              onContextMenu={preventVideoContextMenu}
+              onContextMenu={handleVideoContextMenu}
             />
           </div>
 
@@ -1228,7 +1264,7 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
             onTouchEnd={handleVideoTouchEnd}
             onTouchCancel={handleVideoTouchCancel}
             onDoubleClick={swallowVideoDoubleClick}
-            onContextMenu={preventVideoContextMenu}
+            onContextMenu={handleVideoContextMenu}
           />
 
           {(isPreparing || isWaiting) && !lastVideoError ? (
@@ -1454,6 +1490,21 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
           </div>
         </div>
       </div>
+
+      {videoContextMenu ? (
+        <div
+          className="yt-player-context-menu"
+          style={{ top: videoContextMenu.y, left: videoContextMenu.x }}
+          role="menu"
+          onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <button type="button" role="menuitem" onClick={handleOpenInNewTab}>
+            <FaExternalLinkAlt aria-hidden />
+            Open in new tab
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 };
