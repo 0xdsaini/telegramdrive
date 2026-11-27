@@ -37,6 +37,51 @@ export function gridItemsSignature(items) {
   return items.map((item) => item.key).join('\0');
 }
 
+export function pathSegments(path) {
+  if (!path || path === '/') {
+    return [];
+  }
+  return path.split('/').filter(Boolean);
+}
+
+/**
+ * Finder-style selection after changing folders: highlight the folder you left
+ * when navigating up; clear when entering a child folder.
+ * @returns {number|null|undefined} index to select, null to clear, undefined if path unchanged
+ */
+export function selectionIndexAfterPathChange(oldPath, newPath, items) {
+  if (oldPath === newPath) {
+    return undefined;
+  }
+
+  const oldSegs = pathSegments(oldPath);
+  const newSegs = pathSegments(newPath);
+
+  if (newSegs.length < oldSegs.length) {
+    const folderName = oldSegs[newSegs.length];
+    if (!folderName) {
+      return null;
+    }
+    const key = `folder:${folderName}`;
+    const idx = items.findIndex((item) => item.key === key);
+    return idx >= 0 ? idx : null;
+  }
+
+  if (newSegs.length > oldSegs.length) {
+    return null;
+  }
+
+  return null;
+}
+
+export function selectionIndexForItemKey(items, key) {
+  if (!key) {
+    return null;
+  }
+  const idx = items.findIndex((item) => item.key === key);
+  return idx >= 0 ? idx : null;
+}
+
 export function clampIndex(index, length) {
   if (length <= 0) {
     return null;

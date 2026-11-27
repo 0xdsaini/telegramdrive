@@ -4,6 +4,8 @@ import {
   gridItemsSignature,
   interpretExplorerKey,
   moveSelection,
+  selectionIndexAfterPathChange,
+  selectionIndexForItemKey,
   shouldIgnoreExplorerShortcuts,
 } from '../../utils/explorerKeyboardNav';
 
@@ -23,13 +25,46 @@ export function useExplorerKeyboardNav({
   const itemRefs = useRef([]);
   const selectedIndexRef = useRef(selectedIndex);
   const itemsRef = useRef(items);
+  const previousPathRef = useRef(currentPath);
+  const selectedItemKeyRef = useRef(null);
 
   selectedIndexRef.current = selectedIndex;
   itemsRef.current = items;
 
   useEffect(() => {
-    setSelectedIndex(null);
-  }, [currentPath, itemsSig]);
+    const idx = selectedIndex;
+    if (idx == null || idx < 0 || idx >= items.length) {
+      selectedItemKeyRef.current = null;
+    } else {
+      selectedItemKeyRef.current = items[idx]?.key ?? null;
+    }
+  }, [selectedIndex, items]);
+
+  useEffect(() => {
+    const oldPath = previousPathRef.current;
+    const newPath = currentPath;
+
+    if (oldPath !== newPath) {
+      const restored = selectionIndexAfterPathChange(oldPath, newPath, items);
+      setSelectedIndex(restored ?? null);
+      previousPathRef.current = newPath;
+      return;
+    }
+
+    const key = selectedItemKeyRef.current;
+    setSelectedIndex((current) => {
+      if (key) {
+        const byKey = selectionIndexForItemKey(items, key);
+        if (byKey != null) {
+          return byKey;
+        }
+      }
+      if (current != null && current >= items.length) {
+        return null;
+      }
+      return current;
+    });
+  }, [currentPath, itemsSig, items]);
 
   useEffect(() => {
     itemRefs.current = itemRefs.current.slice(0, items.length);

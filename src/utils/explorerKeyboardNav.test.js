@@ -3,6 +3,7 @@ import {
   clampIndex,
   interpretExplorerKey,
   moveSelection,
+  selectionIndexAfterPathChange,
   shouldIgnoreExplorerShortcuts,
 } from './explorerKeyboardNav';
 
@@ -49,5 +50,29 @@ describe('shouldIgnoreExplorerShortcuts', () => {
 describe('clampIndex', () => {
   it('returns null for empty', () => {
     expect(clampIndex(0, 0)).toBe(null);
+  });
+});
+
+describe('selectionIndexAfterPathChange', () => {
+  const photosFolderItems = buildExplorerGridItems({
+    subfolders: [{ name: '2024' }, { name: '2023' }],
+    files: [],
+  });
+
+  it('highlights the exited folder when going up one level', () => {
+    expect(selectionIndexAfterPathChange('/Photos/2024', '/Photos', photosFolderItems)).toBe(0);
+  });
+
+  it('highlights the correct folder when jumping up via breadcrumb', () => {
+    const rootItems = buildExplorerGridItems({
+      subfolders: [{ name: 'a' }, { name: 'b' }],
+      files: [],
+    });
+    expect(selectionIndexAfterPathChange('/a/b/c', '/a', rootItems)).toBe(1);
+    expect(selectionIndexAfterPathChange('/a/b/c', '/', rootItems)).toBe(0);
+  });
+
+  it('clears selection when entering a child folder', () => {
+    expect(selectionIndexAfterPathChange('/Photos', '/Photos/2024', photosFolderItems)).toBe(null);
   });
 });
