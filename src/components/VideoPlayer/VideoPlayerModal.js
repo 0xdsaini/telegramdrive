@@ -9,10 +9,9 @@ import {
   FaCompress,
   FaCog,
   FaMusic,
-  FaExternalLinkAlt,
 } from 'react-icons/fa';
 import { toggleStreamInUse } from '../../utils/streamBridge';
-import { isStreamUrl, openStreamUrlInNewTab } from '../../utils/streamUrl';
+import { getAbsoluteStreamUrl, isStreamUrl } from '../../utils/streamUrl';
 import { streamDebug, streamDebugError } from '../../utils/streamDebug';
 import {
   isPortraitViewport,
@@ -141,27 +140,6 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
   const [swipeDismissY, setSwipeDismissY] = useState(0);
   const [swipeDismissDragging, setSwipeDismissDragging] = useState(false);
   const [speedBoostVisible, setSpeedBoostVisible] = useState(false);
-  const [videoContextMenu, setVideoContextMenu] = useState(null);
-
-  useEffect(() => {
-    if (!videoContextMenu) return undefined;
-    const close = () => setVideoContextMenu(null);
-    const onKey = (e) => {
-      if (e.key === 'Escape') close();
-    };
-    document.addEventListener('mousedown', close);
-    document.addEventListener('scroll', close, true);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', close);
-      document.removeEventListener('scroll', close, true);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [videoContextMenu]);
-
-  useEffect(() => {
-    if (!open) setVideoContextMenu(null);
-  }, [open]);
 
   const bumpControlsVisible = useCallback(() => {
     setShowControls(true);
@@ -443,23 +421,29 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
     return 'center';
   }, []);
 
-  const handleVideoContextMenu = useCallback(
+  const preventVideoContextMenu = useCallback((e) => {
+    e.preventDefault();
+  }, []);
+
+  const handleStreamLinkClick = useCallback(
     (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (!streamUrl || !isStreamUrl(streamUrl)) {
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
         return;
       }
-      setShowSettings(false);
-      setVideoContextMenu({ x: e.clientX, y: e.clientY });
+      if (e.button !== 0) {
+        return;
+      }
+      e.preventDefault();
+      if (Date.now() - lastTouchAtRef.current < TOUCH_CLICK_GUARD_MS) {
+        return;
+      }
+      if (e.pointerType && e.pointerType !== 'mouse') {
+        return;
+      }
+      togglePlay();
     },
-    [streamUrl],
+    [togglePlay],
   );
-
-  const handleOpenInNewTab = useCallback(() => {
-    setVideoContextMenu(null);
-    openStreamUrlInNewTab(streamUrl);
-  }, [streamUrl]);
 
   const handleVideoTouchStart = useCallback(
     (e) => {
@@ -1139,6 +1123,7 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
   const playedPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
   const swipeBackdropOpacity =
     swipeDismissY > 0 ? Math.max(0.2, 1 - swipeDismissY / 480) : undefined;
+  const absoluteStreamUrl = open ? getAbsoluteStreamUrl(streamUrl) : null;
 
   return (
     <div
@@ -1233,39 +1218,63 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
 
         <div
           className={`yt-player-video-wrap${audioOnly ? ' yt-player-video-wrap--audio' : ''}`}
-          onContextMenu={handleVideoContextMenu}
           role="presentation"
         >
           {audioOnly ? (
             <div className="yt-player-audio-panel" aria-hidden={isPlaying}>
               <FaMusic className="yt-player-audio-icon" />
               <p className="yt-player-audio-title" title={title}>
-                {title}
+                {absoluteStreamUrl ? (
+                  <a href={absoluteStreamUrl}>{title}</a>
+                ) : (
+                  title
+                )}
               </p>
             </div>
           ) : null}
           <div className="yt-player-video-container" aria-hidden>
             <video
               ref={videoRef}
-              className={`yt-player-video${audioOnly ? ' yt-player-video--audio' : ''}`}
+              className={`yt-player-video${audioOnly ? ' yt-player-video--audio' : ''}${
+                absoluteStreamUrl && !IS_COARSE_POINTER ? ' yt-player-video--under-link' : ''
+              }`}
               playsInline
               disablePictureInPicture
               controlsList="nodownload noremoteplayback"
-              onContextMenu={handleVideoContextMenu}
+              onContextMenu={preventVideoContextMenu}
             />
           </div>
 
-          <div
-            ref={touchGestureRef}
-            className="yt-player-touch-gesture"
-            aria-hidden
-            onClick={handleVideoAreaClick}
-            onTouchStart={handleVideoTouchStart}
-            onTouchEnd={handleVideoTouchEnd}
-            onTouchCancel={handleVideoTouchCancel}
-            onDoubleClick={swallowVideoDoubleClick}
-            onContextMenu={handleVideoContextMenu}
-          />
+          {IS_COARSE_POINTER ? (
+            <div
+              ref={touchGestureRef}
+              className="yt-player-touch-gesture"
+              aria-hidden
+              onClick={handleVideoAreaClick}
+              onTouchStart={handleVideoTouchStart}
+              onTouchEnd={handleVideoTouchEnd}
+              onTouchCancel={handleVideoTouchCancel}
+              onDoubleClick={swallowVideoDoubleClick}
+              onContextMenu={preventVideoContextMenu}
+            />
+          ) : absoluteStreamUrl ? (
+            <a
+              href={absoluteStreamUrl}
+              className="yt-player-stream-link"
+              aria-label={title ? `Open ${title} in new tab` : 'Open stream in new tab'}
+              onClick={handleStreamLinkClick}
+              onDoubleClick={swallowVideoDoubleClick}
+            />
+          ) : (
+            <div
+              ref={touchGestureRef}
+              className="yt-player-touch-gesture"
+              aria-hidden
+              onClick={handleVideoAreaClick}
+              onDoubleClick={swallowVideoDoubleClick}
+              onContextMenu={preventVideoContextMenu}
+            />
+          )}
 
           {(isPreparing || isWaiting) && !lastVideoError ? (
             <div className="yt-player-spinner" aria-hidden />
@@ -1491,20 +1500,6 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
         </div>
       </div>
 
-      {videoContextMenu ? (
-        <div
-          className="yt-player-context-menu"
-          style={{ top: videoContextMenu.y, left: videoContextMenu.x }}
-          role="menu"
-          onClick={(e) => e.stopPropagation()}
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          <button type="button" role="menuitem" onClick={handleOpenInNewTab}>
-            <FaExternalLinkAlt aria-hidden />
-            Open in new tab
-          </button>
-        </div>
-      ) : null}
     </div>
   );
 };

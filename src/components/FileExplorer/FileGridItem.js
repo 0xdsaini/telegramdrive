@@ -1,5 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { FaDownload, FaTrash, FaEllipsisV, FaPlay, FaExternalLinkAlt } from 'react-icons/fa';
+import { FaDownload, FaTrash, FaEllipsisV, FaPlay } from 'react-icons/fa';
+
+function shouldLetBrowserNavigate(e) {
+  return e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button === 1;
+}
 
 const FileGridItem = ({
   filename,
@@ -8,16 +12,15 @@ const FileGridItem = ({
   isStreamable,
   keyboardSelected = false,
   itemRef,
+  fileHref,
   onSelect,
   onPlay,
   onDownload,
   onDelete,
-  onOpenInNewTab,
   poster,
   icon,
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
-  const [contextMenu, setContextMenu] = useState(null);
   const menuRef = useRef(null);
   const draggedRef = useRef(false);
 
@@ -34,22 +37,6 @@ const FileGridItem = ({
     return () => document.removeEventListener('mousedown', close);
   }, [menuOpen]);
 
-  useEffect(() => {
-    if (!contextMenu) return undefined;
-    const close = () => setContextMenu(null);
-    const onKey = (e) => {
-      if (e.key === 'Escape') close();
-    };
-    document.addEventListener('mousedown', close);
-    document.addEventListener('scroll', close, true);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', close);
-      document.removeEventListener('scroll', close, true);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [contextMenu]);
-
   const handlePlay = (e) => {
     if (draggedRef.current) {
       draggedRef.current = false;
@@ -63,6 +50,7 @@ const FileGridItem = ({
     isVideo ? 'file-item--video' : '',
     isStreamable && !isVideo ? 'file-item--media' : '',
     keyboardSelected ? 'file-item--keyboard-selected' : '',
+    fileHref ? 'file-item--link' : '',
   ]
     .filter(Boolean)
     .join(' ');
@@ -74,40 +62,39 @@ const FileGridItem = ({
     }
   };
 
-  const handleOpenInNewTab = (e) => {
-    e?.stopPropagation?.();
-    setMenuOpen(false);
-    setContextMenu(null);
-    onOpenInNewTab?.(filename, e);
+  const handleRootClick = (e) => {
+    if (fileHref && shouldLetBrowserNavigate(e)) {
+      return;
+    }
+    if (fileHref) {
+      e.preventDefault();
+    }
+    handleCardClick(e);
   };
 
-  const handleContextMenu = (e) => {
-    if (!isStreamable || !onOpenInNewTab) return;
-    e.preventDefault();
-    e.stopPropagation();
-    setMenuOpen(false);
-    setContextMenu({ x: e.clientX, y: e.clientY });
+  const sharedProps = {
+    ref: itemRef,
+    className: classNames,
+    'aria-selected': keyboardSelected || undefined,
+    'aria-label': isStreamable ? `Play ${filename}` : filename,
+    draggable: true,
+    onDragStart: (e) => {
+      draggedRef.current = true;
+      e.dataTransfer.setData('text/plain', dragData);
+    },
+    onDragEnd: () => {
+      setTimeout(() => {
+        draggedRef.current = false;
+      }, 0);
+    },
+    onClick: handleRootClick,
   };
+
+  const Root = fileHref ? 'a' : 'div';
+  const rootProps = fileHref ? { ...sharedProps, href: fileHref } : sharedProps;
 
   return (
-    <div
-      ref={itemRef}
-      className={classNames}
-      aria-selected={keyboardSelected || undefined}
-      aria-label={isStreamable ? `Play ${filename}` : filename}
-      onContextMenu={handleContextMenu}
-      draggable
-      onDragStart={(e) => {
-        draggedRef.current = true;
-        e.dataTransfer.setData('text/plain', dragData);
-      }}
-      onDragEnd={() => {
-        setTimeout(() => {
-          draggedRef.current = false;
-        }, 0);
-      }}
-      onClick={handleCardClick}
-    >
+    <Root {...rootProps}>
       <div className="file-card-menu" ref={menuRef}>
         <button
           type="button"
@@ -116,6 +103,7 @@ const FileGridItem = ({
           aria-expanded={menuOpen}
           onClick={(e) => {
             e.stopPropagation();
+            e.preventDefault();
             setMenuOpen((v) => !v);
           }}
         >
@@ -124,30 +112,20 @@ const FileGridItem = ({
         {menuOpen && (
           <div className="file-card-menu-panel" role="menu">
             {isStreamable ? (
-              <>
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="file-card-menu-item"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setMenuOpen(false);
-                    handlePlay(e);
-                  }}
-                >
-                  <FaPlay aria-hidden />
-                  Play
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="file-card-menu-item"
-                  onClick={handleOpenInNewTab}
-                >
-                  <FaExternalLinkAlt aria-hidden />
-                  Open in new tab
-                </button>
-              </>
+              <button
+                type="button"
+                role="menuitem"
+                className="file-card-menu-item"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  setMenuOpen(false);
+                  handlePlay(e);
+                }}
+              >
+                <FaPlay aria-hidden />
+                Play
+              </button>
             ) : null}
             <button
               type="button"
@@ -155,6 +133,7 @@ const FileGridItem = ({
               className="file-card-menu-item"
               onClick={(e) => {
                 e.stopPropagation();
+                e.preventDefault();
                 setMenuOpen(false);
                 onDownload(filename, e);
               }}
@@ -168,6 +147,7 @@ const FileGridItem = ({
               className="file-card-menu-item file-card-menu-item--danger"
               onClick={(e) => {
                 e.stopPropagation();
+                e.preventDefault();
                 setMenuOpen(false);
                 onDelete(filename, e);
               }}
@@ -202,21 +182,7 @@ const FileGridItem = ({
       <span className="file-name" title={filename}>
         {filename}
       </span>
-
-      {contextMenu ? (
-        <div
-          className="file-card-menu-panel file-card-context-menu"
-          style={{ top: contextMenu.y, left: contextMenu.x }}
-          role="menu"
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          <button type="button" role="menuitem" className="file-card-menu-item" onClick={handleOpenInNewTab}>
-            <FaExternalLinkAlt aria-hidden />
-            Open in new tab
-          </button>
-        </div>
-      ) : null}
-    </div>
+    </Root>
   );
 };
 

@@ -741,35 +741,29 @@
   background: rgba(255, 48, 48, 0.28);
 }
 
-.yt-player-context-menu {
-  position: fixed;
-  z-index: 10050;
-  margin: 0;
-  padding: 6px 0;
-  min-width: 168px;
-  background: rgba(28, 28, 28, 0.98);
-  border-radius: 8px;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+.yt-player-stream-link {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+  text-decoration: none;
 }
 
-.yt-player-context-menu button {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 10px 16px;
-  border: none;
-  background: transparent;
-  color: #eee;
-  font-size: 0.9rem;
-  text-align: left;
-  cursor: pointer;
-  white-space: nowrap;
+.yt-player-video--under-link {
+  pointer-events: none;
 }
 
-.yt-player-context-menu button:hover {
-  background: rgba(255, 255, 255, 0.12);
-  color: #fff;
+.yt-player-audio-title a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: rgba(255, 255, 255, 0.35);
+  text-underline-offset: 3px;
+}
+
+.yt-player-audio-title a:hover {
+  text-decoration-color: rgba(255, 255, 255, 0.75);
 }
 
 @media (max-width: 600px) {

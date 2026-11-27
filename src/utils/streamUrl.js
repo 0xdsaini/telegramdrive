@@ -41,14 +41,15 @@ export function parseStreamUrlInfo(url) {
   }
 }
 
-/** Opens a progressive-stream URL in a new tab (native video element; SW serves bytes). */
-export function openStreamUrlInNewTab(streamUrl) {
-  if (typeof window === 'undefined' || !streamUrl || !isStreamUrl(streamUrl)) {
-    return false;
+/** Absolute href for a progressive-stream path (for `<a href>` and native context menus). */
+export function getAbsoluteStreamUrl(streamUrl) {
+  if (!streamUrl || !isStreamUrl(streamUrl)) {
+    return null;
   }
-  const href = streamUrl.startsWith('http')
+  if (typeof window === 'undefined') {
+    return streamUrl;
+  }
+  return streamUrl.startsWith('http')
     ? streamUrl
     : new URL(streamUrl, window.location.origin).href;
-  const opened = window.open(href, '_blank', 'noopener,noreferrer');
-  return Boolean(opened);
 }

@@ -67,7 +67,7 @@ import { useExplorerKeyboardNav } from './useExplorerKeyboardNav';
 import { isDesktopFinePointer } from '../../utils/deviceInput';
 import {
   parseExplorerUrlFromLocation,
-  openExplorerFileInNewTab,
+  buildExplorerBrowserPathname,
   pushExplorerBrowserUrl,
   readPendingExplorerPath,
   replaceExplorerBrowserUrl,
@@ -1445,11 +1445,6 @@ const FileExplorer = () => {
     void openStreamForFile(fileName, e);
   };
 
-  const handleOpenInNewTab = (fileName, e) => {
-    e?.stopPropagation?.();
-    openExplorerFileInNewTab(currentPath, fileName);
-  };
-
   keyboardOpenFileRef.current = (fileName) => {
     if (isStreamableMediaFileName(fileName)) {
       void openStreamForFile(fileName, null);
@@ -1732,7 +1727,11 @@ const FileExplorer = () => {
                     keyboardSelected={keyboardSelected}
                     onSelect={() => setSelectedIndex(index)}
                     onPlay={handleStreamPlay}
-                    onOpenInNewTab={isStreamable ? handleOpenInNewTab : undefined}
+                    fileHref={
+                      isStreamable
+                        ? buildExplorerBrowserPathname(currentPath, file.filename)
+                        : undefined
+                    }
                     onDownload={handleDownloadFile}
                     onDelete={handleDeleteFile}
                     icon={getFileIcon(file.filename)}
