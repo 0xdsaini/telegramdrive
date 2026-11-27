@@ -1186,6 +1186,29 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
     };
   }, [open, duration, seekToFraction]);
 
+  useLayoutEffect(() => {
+    if (!open || !showSettings) return;
+
+    const stage = stageRef.current;
+    if (!stage) return;
+
+    stage.querySelectorAll('.yt-player-settings-menu').forEach((menu) => {
+      const wrap = menu.closest('.yt-player-settings-wrap');
+      if (wrap && getComputedStyle(wrap).display === 'none') return;
+
+      const normalBtn = menu.querySelector('[data-playback-rate="1"]');
+      const normalLi = normalBtn?.closest('li');
+      if (!normalLi) return;
+
+      const heading = menu.querySelector('.yt-player-settings-menu-heading');
+      const headingSticky = heading && getComputedStyle(heading).position === 'sticky';
+
+      menu.scrollTop = headingSticky && heading
+        ? Math.max(0, normalLi.offsetTop - heading.offsetHeight)
+        : Math.max(0, normalLi.offsetTop);
+    });
+  }, [open, showSettings, audioTrackChoices.length, audioOnly]);
+
   if (!open) {
     return null;
   }
@@ -1215,6 +1238,7 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
           <button
             type="button"
             role="menuitemradio"
+            data-playback-rate={rate}
             aria-checked={playbackRate === rate}
             className={playbackRate === rate ? 'is-active' : ''}
             onClick={() => setRate(rate)}
