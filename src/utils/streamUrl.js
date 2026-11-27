@@ -53,3 +53,9 @@ export function getAbsoluteStreamUrl(streamUrl) {
     ? streamUrl
     : new URL(streamUrl, window.location.origin).href;
 }
+
+export function openStreamUrlInNewTab(streamUrl) {
+  const href = getAbsoluteStreamUrl(streamUrl);
+  if (!href) return;
+  window.open(href, '_blank', 'noopener,noreferrer');
+}
