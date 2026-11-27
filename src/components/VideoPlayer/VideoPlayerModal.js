@@ -11,7 +11,15 @@ import {
   FaMusic,
 } from 'react-icons/fa';
 import { toggleStreamInUse } from '../../utils/streamBridge';
-import { getAbsoluteStreamUrl, isStreamUrl } from '../../utils/streamUrl';
+import { getAbsoluteStreamUrl, isStreamUrl, parseStreamUrlInfo } from '../../utils/streamUrl';
+import {
+  applyInitialAudioTrackSelection,
+  audioTrackKey,
+  collectAudioTrackChoices,
+  readSavedAudioTrackKey,
+  selectAudioTrackByKey,
+  writeSavedAudioTrackKey,
+} from '../../utils/videoAudioTracks';
 import { streamDebug, streamDebugError } from '../../utils/streamDebug';
 import {
   isPortraitViewport,
@@ -88,34 +96,13 @@ const UNSUPPORTED_AUDIO_FFMPEG_CMD =
 const UNSUPPORTED_AUDIO_HINT =
   `Audio on this file is not supported. Run ${UNSUPPORTED_AUDIO_FFMPEG_CMD} and re-upload.`;
 
-function isEnglishAudioLanguage(language) {
-  const lang = (language || '').toLowerCase();
-  return lang === 'eng' || lang === 'en' || lang.startsWith('en-');
-}
-
-/** When multiple audio tracks exist, use English if present; otherwise keep browser default. */
-function preferEnglishAudioTrack(video) {
+function syncActiveAudioTrackKey(video) {
   const tracks = video?.audioTracks;
-  if (!tracks?.length || tracks.length < 2) {
-    return;
-  }
-  let englishTrack = null;
+  if (!tracks?.length) return '';
   for (let i = 0; i < tracks.length; i += 1) {
-    if (isEnglishAudioLanguage(tracks[i].language)) {
-      englishTrack = tracks[i];
-      break;
-    }
+    if (tracks[i].enabled) return audioTrackKey(tracks[i], i);
   }
-  if (!englishTrack) {
-    return;
-  }
-  for (let i = 0; i < tracks.length; i += 1) {
-    tracks[i].enabled = tracks[i] === englishTrack;
-  }
-  streamDebug('video', 'preferEnglishAudioTrack', {
-    trackCount: tracks.length,
-    language: englishTrack.language,
-  });
+  return audioTrackKey(tracks[0], 0);
 }
 
 const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, audioOnly = false }) => {
@@ -176,6 +163,8 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
   const [swipeDismissY, setSwipeDismissY] = useState(0);
   const [swipeDismissDragging, setSwipeDismissDragging] = useState(false);
   const [speedBoostVisible, setSpeedBoostVisible] = useState(false);
+  const [audioTrackChoices, setAudioTrackChoices] = useState([]);
+  const [selectedAudioTrackKey, setSelectedAudioTrackKey] = useState('');
 
   const bumpControlsVisible = useCallback(() => {
     setShowControls(true);
@@ -187,6 +176,18 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
       }
     }, CONTROLS_HIDE_MS);
   }, []);
+
+  const selectAudioTrack = useCallback(
+    (trackKey) => {
+      const video = videoRef.current;
+      if (!video || !selectAudioTrackByKey(video, trackKey)) return;
+      setSelectedAudioTrackKey(trackKey);
+      const fileId = parseStreamUrlInfo(streamUrl)?.fileId;
+      if (fileId) writeSavedAudioTrackKey(fileId, trackKey);
+      bumpControlsVisible();
+    },
+    [streamUrl, bumpControlsVisible]
+  );
 
   const togglePlay = useCallback(() => {
     const video = videoRef.current;
@@ -975,6 +976,8 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
     let previousSrc = '';
     let cancelled = false;
     playbackRetryRef.current = false;
+    setAudioTrackChoices([]);
+    setSelectedAudioTrackKey('');
 
     const syncUi = () => {
       setCurrentTime(video.currentTime);
@@ -1047,8 +1050,12 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
             })();
           }
         }
-        if (name === 'loadedmetadata') {
-          preferEnglishAudioTrack(video);
+        if (name === 'loadedmetadata' && !audioOnly) {
+          const fileId = parseStreamUrlInfo(streamUrl)?.fileId;
+          const saved = fileId ? readSavedAudioTrackKey(fileId) : null;
+          const { choices, activeKey } = applyInitialAudioTrackSelection(video, saved);
+          setAudioTrackChoices(choices);
+          setSelectedAudioTrackKey(activeKey);
         }
         if (name === 'playing') setIsWaiting(false);
         if (name === 'waiting') setIsWaiting(true);
@@ -1063,6 +1070,22 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
       setBuffered(getBufferSegments(video));
     };
     video.addEventListener('timeupdate', onTimeUpdate);
+
+    const onAudioTracksChanged = () => {
+      const tracks = video.audioTracks;
+      if (!tracks?.length) {
+        setAudioTrackChoices([]);
+        setSelectedAudioTrackKey('');
+        return;
+      }
+      setAudioTrackChoices(collectAudioTrackChoices(tracks));
+      setSelectedAudioTrackKey(syncActiveAudioTrackKey(video));
+    };
+    const audioTrackList = video.audioTracks;
+    if (audioTrackList?.addEventListener) {
+      audioTrackList.addEventListener('change', onAudioTracksChanged);
+      audioTrackList.addEventListener('addtrack', onAudioTracksChanged);
+    }
 
     const setSrc = (url) => {
       streamDebug('video', 'setSrc', {
@@ -1116,6 +1139,10 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
       setIsPreparing(false);
       handlers.forEach(([name, fn]) => video.removeEventListener(name, fn));
       video.removeEventListener('timeupdate', onTimeUpdate);
+      if (audioTrackList?.removeEventListener) {
+        audioTrackList.removeEventListener('change', onAudioTracksChanged);
+        audioTrackList.removeEventListener('addtrack', onAudioTracksChanged);
+      }
       video.pause();
       if (previousSrc && isStreamUrl(previousSrc)) {
         toggleStreamInUse(previousSrc, false);
@@ -1124,7 +1151,7 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
       video.load();
       if (hideControlsTimer.current) clearTimeout(hideControlsTimer.current);
     };
-  }, [open, streamUrl, bumpControlsVisible, preparePlayback]);
+  }, [open, streamUrl, bumpControlsVisible, preparePlayback, audioOnly]);
 
   const handleProgressPointer = (clientX, rect) => {
     if (!Number.isFinite(duration) || duration <= 0) return;
@@ -1167,6 +1194,53 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
   const swipeBackdropOpacity =
     swipeDismissY > 0 ? Math.max(0.2, 1 - swipeDismissY / 480) : undefined;
   const absoluteStreamUrl = open ? getAbsoluteStreamUrl(streamUrl) : null;
+  const showAudioTrackMenu = !audioOnly && audioTrackChoices.length >= 2;
+  const settingsMenuExtraClass = showAudioTrackMenu ? ' yt-player-settings-menu--with-audio' : '';
+
+  const renderSettingsMenu = (positionClass) => (
+    <ul
+      className={`yt-player-settings-menu${positionClass}${settingsMenuExtraClass}`}
+      role="menu"
+    >
+      <li className="yt-player-settings-menu-heading" role="presentation">
+        Speed
+      </li>
+      {PLAYBACK_RATES.map((rate) => (
+        <li key={rate} role="none">
+          <button
+            type="button"
+            role="menuitemradio"
+            aria-checked={playbackRate === rate}
+            className={playbackRate === rate ? 'is-active' : ''}
+            onClick={() => setRate(rate)}
+          >
+            {rate === 1 ? 'Normal' : `${rate}×`}
+          </button>
+        </li>
+      ))}
+      {showAudioTrackMenu ? (
+        <>
+          <li className="yt-player-settings-menu-divider" role="separator" />
+          <li className="yt-player-settings-menu-heading" role="presentation">
+            Audio
+          </li>
+          {audioTrackChoices.map((choice) => (
+            <li key={choice.key} role="none">
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={selectedAudioTrackKey === choice.key}
+                className={selectedAudioTrackKey === choice.key ? 'is-active' : ''}
+                onClick={() => selectAudioTrack(choice.key)}
+              >
+                {choice.label}
+              </button>
+            </li>
+          ))}
+        </>
+      ) : null}
+    </ul>
+  );
 
   return (
     <div
@@ -1223,30 +1297,14 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
               className="yt-player-topbtn yt-player-topbtn--settings"
               onClick={() => setShowSettings((s) => !s)}
               aria-expanded={showSettings}
-              aria-label="Playback speed"
+              aria-label="Player settings"
             >
               <FaCog />
               {playbackRate !== 1 ? (
                 <span className="yt-player-rate-label">{playbackRate}×</span>
               ) : null}
             </button>
-            {showSettings ? (
-              <ul className="yt-player-settings-menu yt-player-settings-menu--top" role="menu">
-                {PLAYBACK_RATES.map((rate) => (
-                  <li key={rate} role="none">
-                    <button
-                      type="button"
-                      role="menuitemradio"
-                      aria-checked={playbackRate === rate}
-                      className={playbackRate === rate ? 'is-active' : ''}
-                      onClick={() => setRate(rate)}
-                    >
-                      {rate === 1 ? 'Normal' : `${rate}×`}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
+            {showSettings ? renderSettingsMenu(' yt-player-settings-menu--top') : null}
           </div>
         </div>
 
@@ -1506,28 +1564,12 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
                   className="yt-player-btn"
                   onClick={() => setShowSettings((s) => !s)}
                   aria-expanded={showSettings}
-                  aria-label="Playback speed"
+                  aria-label="Player settings"
                 >
                   <FaCog />
                   <span className="yt-player-rate-label">{playbackRate === 1 ? '' : `${playbackRate}×`}</span>
                 </button>
-                {showSettings ? (
-                  <ul className="yt-player-settings-menu" role="menu">
-                    {PLAYBACK_RATES.map((rate) => (
-                      <li key={rate} role="none">
-                        <button
-                          type="button"
-                          role="menuitemradio"
-                          aria-checked={playbackRate === rate}
-                          className={playbackRate === rate ? 'is-active' : ''}
-                          onClick={() => setRate(rate)}
-                        >
-                          {rate === 1 ? 'Normal' : `${rate}×`}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
+                {showSettings ? renderSettingsMenu('') : null}
               </div>
 
               <button

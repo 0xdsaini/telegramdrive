@@ -715,10 +715,34 @@
   padding: 6px 0;
   list-style: none;
   min-width: 120px;
+  max-height: min(70vh, 420px);
+  overflow-y: auto;
   background: rgba(28, 28, 28, 0.98);
   border-radius: 8px;
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
   z-index: 10;
+}
+
+.yt-player-settings-menu--with-audio {
+  min-width: 148px;
+}
+
+.yt-player-settings-menu-heading {
+  padding: 4px 16px 2px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.42);
+  pointer-events: none;
+  user-select: none;
+}
+
+.yt-player-settings-menu-divider {
+  height: 1px;
+  margin: 6px 10px;
+  background: rgba(255, 255, 255, 0.1);
+  list-style: none;
 }
 
 .yt-player-settings-menu button {
