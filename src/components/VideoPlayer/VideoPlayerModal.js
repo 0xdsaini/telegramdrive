@@ -54,6 +54,9 @@ const TOUCH_CLICK_GUARD_MS = 900;
 const TRANSPORT_LOCK_MS = 450;
 const SWIPE_DISMISS_CLOSE_PX = 110;
 const SWIPE_DISMISS_AXIS_PX = 16;
+const HOLD_2X_MS = 220;
+const HOLD_2X_MOVE_CANCEL_PX = 14;
+const HOLD_2X_RATE = 2;
 
 const IS_COARSE_POINTER =
   typeof window !== 'undefined'
@@ -101,6 +104,14 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
   const centerFlashTimerRef = useRef(null);
   const seekStackRef = useRef({ side: null, burst: 0, steps: 0 });
   const transportLockRef = useRef(0);
+  const speedBoostRef = useRef({
+    timer: null,
+    active: false,
+    savedRate: 1,
+    startX: 0,
+    startY: 0,
+    touchId: null,
+  });
 
   useEffect(() => {
     preparePlaybackRef.current = preparePlayback;
@@ -126,6 +137,7 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
   const [portraitViewport, setPortraitViewport] = useState(() => isPortraitViewport());
   const [swipeDismissY, setSwipeDismissY] = useState(0);
   const [swipeDismissDragging, setSwipeDismissDragging] = useState(false);
+  const [speedBoostVisible, setSpeedBoostVisible] = useState(false);
 
   const bumpControlsVisible = useCallback(() => {
     setShowControls(true);
@@ -309,6 +321,83 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
     tapGestureRef.current.lastSide = null;
   }, []);
 
+  const cancelSpeedBoostHoldTimer = useCallback(() => {
+    const boost = speedBoostRef.current;
+    if (boost.timer) {
+      clearTimeout(boost.timer);
+      boost.timer = null;
+    }
+  }, []);
+
+  const resetSpeedBoost = useCallback(() => {
+    cancelSpeedBoostHoldTimer();
+    const boost = speedBoostRef.current;
+    if (boost.active) {
+      const video = videoRef.current;
+      if (video) {
+        video.playbackRate = boost.savedRate;
+        setPlaybackRate(boost.savedRate);
+      }
+    }
+    boost.active = false;
+    boost.touchId = null;
+    setSpeedBoostVisible(false);
+  }, [cancelSpeedBoostHoldTimer]);
+
+  const endSpeedBoostGesture = useCallback(() => {
+    const wasActive = speedBoostRef.current.active;
+    if (wasActive) {
+      const video = videoRef.current;
+      if (video) {
+        video.playbackRate = speedBoostRef.current.savedRate;
+        setPlaybackRate(speedBoostRef.current.savedRate);
+      }
+    }
+    cancelSpeedBoostHoldTimer();
+    speedBoostRef.current.active = false;
+    speedBoostRef.current.touchId = null;
+    setSpeedBoostVisible(false);
+    return wasActive;
+  }, [cancelSpeedBoostHoldTimer]);
+
+  const activateSpeedBoost = useCallback(() => {
+    const video = videoRef.current;
+    if (!video || video.paused || video.ended) return;
+    const boost = speedBoostRef.current;
+    boost.savedRate = video.playbackRate;
+    boost.active = true;
+    video.playbackRate = HOLD_2X_RATE;
+    setPlaybackRate(HOLD_2X_RATE);
+    setSpeedBoostVisible(true);
+    setShowControls(false);
+    setShowSettings(false);
+    clearTapGesture();
+  }, [clearTapGesture]);
+
+  const armSpeedBoostHold = useCallback(
+    (touch) => {
+      if (!IS_COARSE_POINTER || audioOnly) return;
+      const video = videoRef.current;
+      if (!video || video.paused || video.ended) return;
+
+      cancelSpeedBoostHoldTimer();
+      const boost = speedBoostRef.current;
+      boost.startX = touch.clientX;
+      boost.startY = touch.clientY;
+      boost.touchId = touch.identifier;
+      boost.active = false;
+      boost.savedRate = video.playbackRate;
+
+      const touchId = touch.identifier;
+      boost.timer = window.setTimeout(() => {
+        boost.timer = null;
+        if (boost.touchId !== touchId) return;
+        activateSpeedBoost();
+      }, HOLD_2X_MS);
+    },
+    [audioOnly, activateSpeedBoost, cancelSpeedBoostHoldTimer]
+  );
+
   const handleVideoAreaClick = useCallback(
     (e) => {
       if (IS_COARSE_POINTER) return;
@@ -327,16 +416,65 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
 
   const handleVideoTouchStart = useCallback(
     (e) => {
-      if (e.touches.length !== 1) return;
+      if (e.touches.length !== 1) {
+        resetSpeedBoost();
+        return;
+      }
       const rect = e.currentTarget.getBoundingClientRect();
       touchSessionRef.current = {
         controlsVisible: showControls,
         width: rect.width,
         startedPaused: !!videoRef.current?.paused,
       };
+      armSpeedBoostHold(e.touches[0]);
       bumpControlsVisible();
     },
-    [bumpControlsVisible, showControls]
+    [armSpeedBoostHold, bumpControlsVisible, resetSpeedBoost, showControls]
+  );
+
+  const handleVideoTouchMove = useCallback(
+    (e) => {
+      if (!IS_COARSE_POINTER || audioOnly) return;
+      const boost = speedBoostRef.current;
+      if (boost.touchId == null) return;
+
+      if (e.touches.length !== 1) {
+        if (boost.active) {
+          endSpeedBoostGesture();
+        } else {
+          cancelSpeedBoostHoldTimer();
+          boost.touchId = null;
+        }
+        return;
+      }
+
+      const touch = e.touches[0];
+      if (touch.identifier !== boost.touchId) return;
+
+      const dx = touch.clientX - boost.startX;
+      const dy = touch.clientY - boost.startY;
+      if (Math.hypot(dx, dy) < HOLD_2X_MOVE_CANCEL_PX) return;
+
+      if (boost.active) return;
+
+      cancelSpeedBoostHoldTimer();
+      boost.touchId = null;
+    },
+    [audioOnly, cancelSpeedBoostHoldTimer, endSpeedBoostGesture]
+  );
+
+  const handleVideoTouchCancel = useCallback(
+    (e) => {
+      if (e.changedTouches.length !== 1) {
+        resetSpeedBoost();
+        return;
+      }
+      const touch = e.changedTouches[0];
+      if (speedBoostRef.current.touchId === touch.identifier) {
+        endSpeedBoostGesture();
+      }
+    },
+    [endSpeedBoostGesture, resetSpeedBoost]
   );
 
   const handleStageSwipeTouchStartCapture = useCallback((e) => {
@@ -372,6 +510,17 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
         if (dy > SWIPE_DISMISS_AXIS_PX && dy > Math.abs(dx) * 1.15) {
           swipe.dismissing = true;
           clearTapGesture();
+          cancelSpeedBoostHoldTimer();
+          if (speedBoostRef.current.active) {
+            const video = videoRef.current;
+            if (video) {
+              video.playbackRate = speedBoostRef.current.savedRate;
+              setPlaybackRate(speedBoostRef.current.savedRate);
+            }
+            speedBoostRef.current.active = false;
+            speedBoostRef.current.touchId = null;
+            setSpeedBoostVisible(false);
+          }
         }
       }
 
@@ -380,7 +529,7 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
       e.preventDefault();
       applySwipeDismissOffset(dy);
     },
-    [applySwipeDismissOffset, clearTapGesture]
+    [applySwipeDismissOffset, cancelSpeedBoostHoldTimer, clearTapGesture]
   );
 
   const handleStageSwipeTouchEndCapture = useCallback(
@@ -411,10 +560,20 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
       if (e.changedTouches.length !== 1) return;
       lastTouchAtRef.current = Date.now();
 
+      const touch = e.changedTouches[0];
+      if (speedBoostRef.current.touchId === touch.identifier) {
+        const wasBoosting = endSpeedBoostGesture();
+        if (wasBoosting) {
+          e.preventDefault();
+          return;
+        }
+        cancelSpeedBoostHoldTimer();
+        speedBoostRef.current.touchId = null;
+      }
+
       if (IS_COARSE_POINTER && swipeGestureRef.current.dismissing) {
         return;
       }
-      const touch = e.changedTouches[0];
       const rect = e.currentTarget.getBoundingClientRect();
       const x = touch.clientX - rect.left;
       const width = rect.width || touchSessionRef.current.width || 1;
@@ -458,7 +617,15 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
         bumpControlsVisible();
       }, DOUBLE_TAP_MS);
     },
-    [bumpControlsVisible, clearTapGesture, handleVideoAreaSeek, toggleVideoTransport, videoTapZone]
+    [
+      bumpControlsVisible,
+      cancelSpeedBoostHoldTimer,
+      clearTapGesture,
+      endSpeedBoostGesture,
+      handleVideoAreaSeek,
+      toggleVideoTransport,
+      videoTapZone,
+    ]
   );
 
   const swallowVideoDoubleClick = useCallback(
@@ -562,6 +729,7 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
     if (!open) {
       setImmersiveMode(false);
       clearTapGesture();
+      resetSpeedBoost();
       setSeekRipple(null);
       setCenterFlash(null);
       unlockPlaybackOrientation();
@@ -577,7 +745,7 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
       document.body.classList.remove('yt-player-open');
       unlockPlaybackOrientation();
     };
-  }, [open, clearTapGesture, resetSwipeDismiss]);
+  }, [open, clearTapGesture, resetSpeedBoost, resetSwipeDismiss]);
 
   useEffect(() => {
     if (!open || !IS_COARSE_POINTER) return undefined;
@@ -980,7 +1148,9 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
           className={`yt-player-video-wrap${audioOnly ? ' yt-player-video-wrap--audio' : ''}`}
           onClick={handleVideoAreaClick}
           onTouchStart={handleVideoTouchStart}
+          onTouchMove={handleVideoTouchMove}
           onTouchEnd={handleVideoTouchEnd}
+          onTouchCancel={handleVideoTouchCancel}
           onDoubleClick={swallowVideoDoubleClick}
           role="presentation"
         >
@@ -1040,6 +1210,18 @@ const VideoPlayerModal = ({ open, title, streamUrl, onClose, preparePlayback, au
             <div className="yt-player-center-flash yt-player-center-flash--pause" key={centerFlash.id} aria-hidden>
               <span className="yt-player-pause-bar" />
               <span className="yt-player-pause-bar" />
+            </div>
+          ) : null}
+
+          {speedBoostVisible ? (
+            <div className="yt-player-speed-boost" aria-live="polite" aria-label="Playing at 2x speed">
+              <span className="yt-player-speed-boost__badge">2x</span>
+              <span className="yt-player-speed-boost__chevrons yt-player-speed-boost__chevrons--left" aria-hidden>
+                <span /><span /><span />
+              </span>
+              <span className="yt-player-speed-boost__chevrons yt-player-speed-boost__chevrons--right" aria-hidden>
+                <span /><span /><span />
+              </span>
             </div>
           ) : null}
 
