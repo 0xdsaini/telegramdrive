@@ -4,7 +4,7 @@
  * File bytes are fetched from the page via TDLib (downloadFile + readFilePart).
  * STREAM_SW_REV=6 — TDLib: sequential 1 MiB parts (no single 2 MiB downloadFile).
  */
-const STREAM_SW_REV = 12;
+const STREAM_SW_REV = 13;
 
 const STREAM_CHUNK_MIDDLE_LIMIT = 512 * 1024;
 const STREAM_CHUNK_UPPER_LIMIT = 1024 * 1024;
@@ -18,6 +18,111 @@ const STREAMABLE_MIME_TYPE = /^(?:video|audio|image)\/[\w.+-]+$/;
 
 const deferredPromises = new Map();
 const streams = new Map();
+
+/** WebK-style streamed saves: page enqueues bytes; hidden iframe hits /d/{id}. */
+const downloadMap = new Map();
+
+function notifyDownloadRequestReceived(id) {
+  self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+    clients.forEach((client) => {
+      client.postMessage({ type: 'SW_DOWNLOAD_REQUEST_RECEIVED', id });
+    });
+  });
+}
+
+function onDownloadFetch(event, id) {
+  notifyDownloadRequestReceived(id);
+  event.respondWith(
+    (async () => {
+      await new Promise((resolve) => {
+        setTimeout(resolve, 100);
+      });
+      const item = downloadMap.get(id);
+      if (!item || item.used) {
+        swDebug('download', 'missing download', { id });
+        return new Response('Download not ready', { status: 404 });
+      }
+      item.used = true;
+      swDebug('download', 'fetch', { id });
+      return new Response(item.readableStream, { headers: item.headers, status: 200 });
+    })(),
+  );
+}
+
+function startServiceWorkerDownload(id, headers) {
+  if (downloadMap.has(id)) {
+    return;
+  }
+  let streamController;
+  const readableStream = new ReadableStream(
+    {
+      start(controller) {
+        streamController = controller;
+      },
+      cancel(reason) {
+        swDebug('download', 'stream canceled', { id, reason });
+        const item = downloadMap.get(id);
+        if (item) {
+          item.reject?.(reason);
+          downloadMap.delete(id);
+        }
+      },
+    },
+    new CountQueuingStrategy({ highWaterMark: 1 }),
+  );
+
+  const settle = {
+    resolve: () => {},
+    reject: () => {},
+  };
+
+  downloadMap.set(id, {
+    id,
+    headers,
+    controller: streamController,
+    readableStream,
+    used: false,
+    settle,
+  });
+
+  swDebug('download', 'registered', { id, headers });
+}
+
+function enqueueDownloadChunk(id, bytes) {
+  const item = downloadMap.get(id);
+  if (!item?.controller) {
+    throw new Error('Unknown download');
+  }
+  item.controller.enqueue(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes));
+}
+
+function finalizeDownload(id) {
+  const item = downloadMap.get(id);
+  if (!item?.controller) {
+    return;
+  }
+  try {
+    item.controller.close();
+  } catch {
+    /* ignore */
+  }
+  swDebug('download', 'finalize', { id });
+  setTimeout(() => downloadMap.delete(id), 5000);
+}
+
+function cancelDownload(id) {
+  const item = downloadMap.get(id);
+  if (!item?.controller) {
+    return;
+  }
+  try {
+    item.controller.error(new Error('DOWNLOAD_CANCELED'));
+  } catch {
+    /* ignore */
+  }
+  downloadMap.delete(id);
+  swDebug('download', 'cancel', { id });
+}
 
 /** Set from the page via STREAM_DEBUG_FLAG (?debug=1). Off by default for mobile perf. */
 let swDebugEnabled = false;
@@ -498,6 +603,25 @@ self.addEventListener('message', (event) => {
   if (event.data?.type === 'toggleStreamInUse') {
     toggleStreamInUse(event.data);
   }
+  if (event.data?.type === 'SW_DOWNLOAD_START') {
+    startServiceWorkerDownload(event.data.id, event.data.headers);
+    return;
+  }
+  if (event.data?.type === 'SW_DOWNLOAD_CHUNK') {
+    try {
+      enqueueDownloadChunk(event.data.id, event.data.bytes);
+    } catch (err) {
+      swDebug('download', 'chunk error', String(err));
+    }
+    return;
+  }
+  if (event.data?.type === 'SW_DOWNLOAD_FINALIZE') {
+    finalizeDownload(event.data.id);
+    return;
+  }
+  if (event.data?.type === 'SW_DOWNLOAD_CANCEL') {
+    cancelDownload(event.data.id);
+  }
 });
 
 self.addEventListener('install', () => {
@@ -512,6 +636,12 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
+  const dIdx = url.pathname.indexOf('/d/');
+  if (dIdx !== -1) {
+    const id = url.pathname.slice(dIdx + '/d/'.length).split('?')[0];
+    onDownloadFetch(event, id);
+    return;
+  }
   const idx = url.pathname.indexOf('/stream/');
   if (idx === -1) return;
   const params = url.pathname.slice(idx + '/stream/'.length);
